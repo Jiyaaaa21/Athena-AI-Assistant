@@ -1,0 +1,177 @@
+venv/
+.env
+__pycache__/
+*.pyc
+data/chroma_db/
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+env/
+.venv/
+jyoti/
+
+# =========================
+# Environment Variables
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Database
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+
+# =========================
+# FastAPI / Uvicorn
+# =========================
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# =========================
+# ChromaDB
+# =========================
+data/chroma_db/
+chroma_db/
+chromadb/
+
+# =========================
+# RAG Documents
+# =========================
+uploads/
+documents/
+pdfs/
+
+# =========================
+# Model Files
+# =========================
+models/
+*.pth
+*.pt
+*.ckpt
+*.onnx
+*.h5
+*.bin
+*.safetensors
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# VS Code
+# =========================
+.vscode/
+.history/
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# Node / Next.js Frontend
+# =========================
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Package Managers
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =========================
+# Temporary Files
+# =========================
+tmp/
+temp/
+*.tmp
+
+# =========================
+# Secrets
+# =========================
+secrets/
+credentials.json
+service-account.json
+google_credentials.json
+
+# =========================
+# Cache
+# =========================
+.cache/
+
+# Environment
+.env
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Zip archives
+*.zip
+
+# Audio files
+*.mp3
+*.wav
+
+# Generated files
+project_structure.txt
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environments
+jyoti/
+venv/
+.venv/
+env/
+
+# Frontend
+node_modules/
+dist/
+build/
+
+# Logs
+logs/
+*.log
+
+# Athena runtime data
+data/Chroma_db/
+data/documents/
+data/avatars/
+
+# User generated content
+data/notes/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
