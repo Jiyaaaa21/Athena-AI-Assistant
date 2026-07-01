@@ -71,14 +71,41 @@ def _check_reminders():
                     if due <= now:
                         # Fire it
                         uid = r.user_id
+                        title = r.title or r.content or "Reminder"
                         if uid:
                             with _lock:
                                 _due_queues[uid].append({
                                     "id": r.id,
-                                    "title": r.title or r.content or "Reminder",
+                                    "title": title,
                                     "due_time": r.due_time or "",
                                     "priority": r.priority or "med",
                                 })
+                            # Phase 21: also fire a real OS-level push, so
+                            # the reminder still reaches the person if
+                            # Athena isn't open in any tab -- the
+                            # in-memory queue above only helps while a
+                            # tab is open polling GET /reminders/due.
+                            #
+                            # Phase 23: `urgent=True` for high/urgent
+                            # priority reminders -- flows through to
+                            # public/sw.js as requireInteraction, so a
+                            # genuinely important one stays on screen
+                            # until dismissed instead of auto-hiding
+                            # after a few seconds like a routine reminder.
+                            try:
+                                from backend.core.push_notifications import send_push_to_user
+                                send_push_to_user(
+                                    uid,
+                                    title="Reminder",
+                                    body=title,
+                                    url="/reminders",
+                                    urgent=(r.priority or "").lower() in ("high", "urgent"),
+                                )
+                            except Exception as push_err:
+                                # Never let a push failure block marking
+                                # the reminder as fired -- the in-app
+                                # queue above is the source of truth.
+                                agent_logger.error(f"[Scheduler] push send failed: {push_err}")
                         # Mark as fired
                         db.add(ReminderFired(reminder_id=r.id, fired_at=_utcnow()))
                         fired_count += 1

@@ -62,7 +62,7 @@ export function CitationCard({ source }: { source: Source }) {
     <>
       <div
         onClick={handleClick}
-        className={`athena-glass rounded-xl p-3 flex gap-3 items-center hover:bg-white/80 transition-colors group max-w-md ${
+        className={`athena-glass rounded-xl p-3 flex gap-3 items-center hover:bg-muted/80 transition-colors group max-w-md ${
           canPreview ? "cursor-pointer" : "cursor-default"
         }`}
       >

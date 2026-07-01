@@ -266,7 +266,7 @@ function DocumentsPage() {
           dragOver ? "border-primary bg-primary/5" : "border-border bg-muted/40 hover:bg-muted/60",
         )}
       >
-        <div className="size-12 rounded-2xl bg-white shadow-sm border border-border grid place-items-center mx-auto mb-3">
+        <div className="size-12 rounded-2xl bg-card shadow-sm border border-border grid place-items-center mx-auto mb-3">
           <Upload className="size-5 text-primary" />
         </div>
         <p className="text-sm font-medium">Drag PDFs here or click upload</p>
@@ -286,17 +286,19 @@ function DocumentsPage() {
         )}
       </div>
 
-      <div className="relative mb-4 max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter by name…" className="pl-9" />
-      </div>
+      {!isLoading && (data?.length ?? 0) > 0 && (
+        <div className="relative mb-4 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter by name…" className="pl-9" />
+        </div>
+      )}
 
       {isLoading ? (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-32 rounded-xl bg-muted animate-pulse" />)}
         </div>
       ) : filtered.length === 0 ? (
-        <EmptyState icon={FileText} title="No documents yet" description="Upload a PDF to start grounding your conversations." />
+        <EmptyState icon={FileText} title="No documents yet" description="Upload a PDF to start grounding your conversations." tone="info" />
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((d, i) => (

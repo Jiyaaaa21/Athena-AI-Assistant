@@ -43,12 +43,13 @@ type Props = {
 // ── Inline VAD recorder (self-contained, no store) ───────────────────────────
 
 const VAD_THRESHOLD     = 8;
-// Phase 19 fix: was 2200ms — see voice.ts for full explanation. 700ms
-// matches real assistant response latency without cutting off natural
-// mid-sentence pauses for most speakers.
-const VAD_SILENCE_MS    = 700;
+// Phase 24 fix: was 700ms -- too short, cutting people off during normal
+// mid-sentence pauses. See stores/voice.ts VAD_SILENCE_DURATION_MS for
+// the full explanation; this file has its own separate inline VAD
+// implementation so the same constant has to be updated in both places.
+const VAD_SILENCE_MS    = 1100;
 const VAD_POLL_MS       = 100;
-const STARTUP_GRACE_MS  = 600;  // ignore VAD for this long after starting
+const STARTUP_GRACE_MS  = 800;  // ignore VAD for this long after starting
 
 type RecorderState = "idle" | "recording" | "processing";
 
@@ -398,7 +399,7 @@ export function Composer({ onSend, pending, onVoiceToggle, streaming, onStop }: 
               disabled={isDisabled || !!uploadedFile}
               className={cn(
                 "size-9 grid place-items-center rounded-full transition-colors",
-                "text-muted-foreground hover:bg-black/5 hover:text-foreground",
+                "text-muted-foreground hover:bg-muted hover:text-foreground",
                 (isDisabled || !!uploadedFile) && "opacity-40 cursor-not-allowed",
               )}
               title="Attach file">
@@ -410,7 +411,7 @@ export function Composer({ onSend, pending, onVoiceToggle, streaming, onStop }: 
             {/* Full voice mode button (opens VoiceDialog for TTS continuous) */}
             {onVoiceToggle && (
               <button type="button" onClick={onVoiceToggle}
-                className="size-9 grid place-items-center rounded-full text-muted-foreground hover:bg-black/5 hover:text-foreground transition-colors"
+                className="size-9 grid place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                 title="Full voice mode (with speaker)">
                 <AudioLines className="size-4" />
               </button>
@@ -430,7 +431,7 @@ export function Composer({ onSend, pending, onVoiceToggle, streaming, onStop }: 
                   ? "bg-primary text-primary-foreground ring-4 ring-primary/20"
                   : isTranscribing
                   ? "bg-muted text-muted-foreground cursor-wait"
-                  : "text-muted-foreground hover:bg-black/5 hover:text-foreground",
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
               )}
               title={isRecording ? "Stop recording" : "Voice input"}>
               {isTranscribing

@@ -98,7 +98,7 @@ function ConvRow({
           "group relative flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors",
           active
             ? "bg-primary/10 text-primary"
-            : "text-foreground/70 hover:bg-black/5 hover:text-foreground",
+            : "text-foreground/70 hover:bg-muted hover:text-foreground",
         )}
         onClick={onSelect}
       >
@@ -145,7 +145,7 @@ function ConvRow({
           >
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="p-0.5 rounded hover:bg-black/10 text-muted-foreground">
+                <button className="p-0.5 rounded hover:bg-muted text-muted-foreground">
                   <MoreHorizontal className="size-3.5" />
                 </button>
               </DropdownMenuTrigger>
@@ -284,10 +284,10 @@ function FolderSection({
           <span className="ml-1 text-[9px] opacity-50">({conversations.length})</span>
         </button>
         <div className="opacity-0 group-hover:opacity-100 flex gap-0.5">
-          <button onClick={() => { setDraft(folder.name); setEditingName(true); }} className="p-0.5 rounded hover:bg-black/10 text-muted-foreground">
+          <button onClick={() => { setDraft(folder.name); setEditingName(true); }} className="p-0.5 rounded hover:bg-muted text-muted-foreground">
             <Pencil className="size-2.5" />
           </button>
-          <button onClick={() => setDeleteOpen(true)} className="p-0.5 rounded hover:bg-black/10 text-muted-foreground">
+          <button onClick={() => setDeleteOpen(true)} className="p-0.5 rounded hover:bg-muted text-muted-foreground">
             <Trash2 className="size-2.5" />
           </button>
         </div>
@@ -399,14 +399,14 @@ export function ConversationManager({ collapsed }: { collapsed: boolean }) {
         <div className="flex items-center gap-1">
           <button
             onClick={() => setSearchOpen((o) => !o)}
-            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-black/5 transition-colors"
+            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             title="Search chats"
           >
             <Search className="size-3" />
           </button>
           <button
             onClick={() => setNewFolderOpen(true)}
-            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-black/5 transition-colors"
+            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             title="New folder"
           >
             <FolderPlus className="size-3" />
@@ -424,7 +424,7 @@ export function ConversationManager({ collapsed }: { collapsed: boolean }) {
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search chats…"
               autoFocus
-              className="h-7 pl-6 text-xs bg-white/70"
+              className="h-7 pl-6 text-xs bg-card/70"
             />
             {searchQuery && (
               <button

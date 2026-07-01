@@ -42,6 +42,23 @@ def _resolve_voice(voice_id: str | None) -> str:
     return DEFAULT_VOICE
 
 
+def prepare_voice_params(voice_id: str | None, speed: float, volume: float) -> tuple[str, str, str]:
+    """
+    Resolves a voice_id + speed/volume floats into the (voice, rate_str,
+    vol_str) triple edge-tts's Communicate() expects. Factored out so the
+    true-streaming path (synthesize_stream_async, used by the
+    /voice/speak/stream endpoint) computes this identically to the
+    buffering path (synthesize(), below) without duplicating the
+    percentage-formatting logic in two places.
+    """
+    voice = _resolve_voice(voice_id)
+    rate_pct = int((speed - 1.0) * 100)
+    rate_str = f"+{rate_pct}%" if rate_pct >= 0 else f"{rate_pct}%"
+    vol_pct = int((volume - 1.0) * 100)
+    vol_str = f"+{vol_pct}%" if vol_pct >= 0 else f"{vol_pct}%"
+    return voice, rate_str, vol_str
+
+
 async def _synthesize_async(text: str, voice: str, rate: str, volume: str) -> bytes:
     """Core async synthesis — returns full MP3 bytes."""
     import edge_tts

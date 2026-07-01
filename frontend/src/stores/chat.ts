@@ -8,6 +8,25 @@ import { toast } from "sonner";
 import { chatApi, chatStream } from "@/lib/api";
 import type { ChatMessage } from "@/lib/mock";
 
+// Phase 24 fix: onToken below used to call `import("@/stores/voice")` on
+// EVERY streamed token to feed the incremental TTS pipeline -- during a
+// long response that's dozens of dynamic-import + promise-chain calls
+// per second. The module itself is bundler-cached after the first call
+// so this was never a real network/parse cost, but it was still
+// needless promise/microtask churn stacked on top of the exact code path
+// users were reporting as sluggish. Resolve it once and reuse the
+// reference; any token that streams in before the first resolution just
+// gets picked up by the next one a few ms later (streamingText already
+// accumulates in this store regardless), so nothing is lost.
+let _voiceModuleCache: typeof import("@/stores/voice") | null = null;
+function _getVoiceModuleSync(): typeof import("@/stores/voice") | null {
+  if (!_voiceModuleCache) {
+    import("@/stores/voice").then((m) => { _voiceModuleCache = m; }).catch(() => {});
+    return null;
+  }
+  return _voiceModuleCache;
+}
+
 type UploadedFile = {
   filename: string;
   content_type: string;
@@ -206,9 +225,7 @@ export const useChat = create<ChatState>((set, get) => ({
           // sentence well before the full response has finished
           // generating, instead of waiting for onDone to fire speak().
           if (speakAloud) {
-            import("@/stores/voice")
-              .then(({ useVoice }) => useVoice.getState().speakIncremental(newText))
-              .catch(() => {});
+            _getVoiceModuleSync()?.useVoice.getState().speakIncremental(newText);
           }
         },
 
@@ -216,9 +233,7 @@ export const useChat = create<ChatState>((set, get) => ({
           if (conversationId) set({ activeConversationId: conversationId });
 
           if (speakAloud) {
-            import("@/stores/voice")
-              .then(({ useVoice }) => useVoice.getState().finishIncremental())
-              .catch(() => {});
+            _getVoiceModuleSync()?.useVoice.getState().finishIncremental();
           }
 
           // ── Persist agentName ON the message itself so badge stays visible ──

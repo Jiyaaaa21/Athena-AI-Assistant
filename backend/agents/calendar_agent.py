@@ -160,8 +160,12 @@ class CalendarAgent(BaseAgent):
                 return AgentResult(answer=f"I couldn't create that event: {e}", agent_name=self.name, steps=steps, confidence=40)
 
             local_time = start_dt.strftime("%A, %B %d at %I:%M %p").replace(" 0", " ")
+            # Phase 24 fix: same reasoning as reminder_agent's confirmation —
+            # a hardcoded checkmark+bold template bypasses the LLM (and
+            # every tone rule tuned into SYSTEM_PROMPT) entirely. A plain
+            # sentence reads like how a person actually confirms something.
             return AgentResult(
-                answer=f"✓ Added to your calendar: **{title}** — {local_time}",
+                answer=f"Done — added \"{title}\" to your calendar for {local_time}.",
                 agent_name=self.name, steps=steps, confidence=90,
                 metadata={"event_id": event.get("id")},
             )

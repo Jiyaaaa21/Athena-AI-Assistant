@@ -188,7 +188,7 @@ function WeatherPage() {
 
 function Stat({ icon: Icon, label, value }: { icon: typeof Cloud; label: string; value: string }) {
   return (
-    <div className="rounded-lg bg-white/60 border border-border p-3">
+    <div className="rounded-lg bg-card/60 border border-border p-3">
       <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1 font-semibold">
         <Icon className="size-3" />{label}
       </div>

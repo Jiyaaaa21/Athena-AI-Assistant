@@ -470,6 +470,7 @@ function AnalyticsPanel({ stats }: { stats: MemoryStats | undefined }) {
         icon={PieChart}
         title="No analytics yet"
         description="Chat with Athena to build up memory analytics."
+        tone="accent"
       />
     );
   }
@@ -934,12 +935,14 @@ function MemoryPage() {
               title="Couldn't load memory"
               description="Something went wrong fetching what Athena remembers."
               action={<Button onClick={() => refetch()}>Try again</Button>}
+              tone="danger"
             />
           ) : filtered.length === 0 ? (
             <EmptyState
               icon={Brain}
               title={hasFilters ? "No matches" : "Nothing remembered yet"}
               description={hasFilters ? "Try adjusting your search or filters." : "Chat with Athena and it'll start remembering things here."}
+              tone="accent"
             />
           ) : (
             <ul className="space-y-2">
@@ -973,7 +976,7 @@ function MemoryPage() {
               ))}
             </div>
           ) : !timelineQuery.data?.timeline?.length ? (
-            <EmptyState icon={Clock} title="No timeline data" description="Chat with Athena to build up your memory timeline." />
+            <EmptyState icon={Clock} title="No timeline data" description="Chat with Athena to build up your memory timeline." tone="accent" />
           ) : (
             <div className="space-y-8">
               {timelineQuery.data.timeline.map((period) => (

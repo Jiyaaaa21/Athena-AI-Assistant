@@ -23,11 +23,21 @@ from backend.core.request_context import get_current_user_id
 
 _news_tool = NewsTool()
 
+# Phase 24 fix ("every answer comes back long"): this used to also include
+# "what is", "how does", "explain", and "tell me about" -- all extremely
+# common phrasings for perfectly ordinary questions ("what is 15% of 80",
+# "explain why my reminder didn't fire", "how does this setting work").
+# Because can_handle() is a plain substring match, nearly any question
+# containing one of those phrases got routed here instead of answered
+# directly -- and this agent's prompt (below) unconditionally demands a
+# structured brief with headings and a "Key Takeaways" section regardless
+# of how simple the actual question was. Narrowed to phrases that
+# specifically signal someone wants genuine multi-source research/analysis,
+# not just an ordinary question that happens to start with "what" or "how".
 _RESEARCH_KEYWORDS = {
     "research", "analyse", "analyze", "summarise", "summarize",
-    "explain", "overview", "breakdown", "compare", "investigate",
-    "study", "report", "brief", "deep dive", "what is", "how does",
-    "tell me about", "pros and cons", "advantages", "disadvantages",
+    "deep dive", "investigate", "in-depth", "in depth", "comprehensive",
+    "compare", "comparison", "pros and cons", "advantages and disadvantages",
 }
 
 
@@ -115,12 +125,19 @@ class ResearchAgent(BaseAgent):
             f"IMPORTANT: If this query is a follow-up to the conversation above, "
             f"make sure your answer continues the established topic and references "
             f"prior context where relevant.\n\n"
-            f"Write a comprehensive, well-structured research brief that:\n"
-            f"1. Directly answers the query\n"
-            f"2. Addresses each sub-question\n"
-            f"3. Cites sources where relevant\n"
-            f"4. Ends with a concise 'Key Takeaways' section\n\n"
-            f"Use clear headings and be thorough but concise."
+            f"Answer the query directly, addressing the sub-questions along the way "
+            f"and citing sources where relevant. Match the length and structure to "
+            f"what the query actually needs, the way a knowledgeable person would in "
+            f"conversation:\n"
+            f"- A narrow or single-fact query gets a few direct sentences. No "
+            f"headings, no bullet list, no 'Key Takeaways' section — that would be "
+            f"padding for something this simple.\n"
+            f"- A genuinely broad or multi-part topic (comparisons, several distinct "
+            f"angles, real synthesis across sources) earns more structure: headings "
+            f"and a short takeaways section if that structure actually helps the "
+            f"reader, not by default.\n"
+            f"Never add structure just to look thorough — every heading or bullet "
+            f"should be there because the content needs it."
         )
 
     # ── Public API ────────────────────────────────────────────────────────────

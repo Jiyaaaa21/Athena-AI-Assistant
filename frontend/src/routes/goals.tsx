@@ -34,6 +34,7 @@ import {
 import { goalsApi, projectsApi, type Goal, type Project } from "@/lib/api";
 import { useChat } from "@/stores/chat";
 import { toast } from "sonner";
+import { EmptyState } from "@/components/athena/empty-state";
 
 export const Route = createFileRoute("/goals")({
   head: () => ({
@@ -368,20 +369,22 @@ function GoalsPage() {
 
   return (
     <div className="flex flex-col h-svh overflow-hidden">
-      <PageHeader
-        title="Goals & Projects"
-        description="Track your long-term goals and active projects. Athena uses these to give you better, more relevant answers."
-        actions={
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setProjectDialog({ open: true })}>
-              <FolderOpen className="size-3.5 mr-1.5" /> New Project
-            </Button>
-            <Button size="sm" onClick={() => setGoalDialog({ open: true })}>
-              <Plus className="size-3.5 mr-1.5" /> New Goal
-            </Button>
-          </div>
-        }
-      />
+      <div className="px-6 pt-8">
+        <PageHeader
+          title="Goals & Projects"
+          description="Track your long-term goals and active projects. Athena uses these to give you better, more relevant answers."
+          actions={
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setProjectDialog({ open: true })}>
+                <FolderOpen className="size-3.5 mr-1.5" /> New Project
+              </Button>
+              <Button size="sm" onClick={() => setGoalDialog({ open: true })}>
+                <Plus className="size-3.5 mr-1.5" /> New Goal
+              </Button>
+            </div>
+          }
+        />
+      </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-10">
         {/* ── Goals ── */}
@@ -399,13 +402,17 @@ function GoalsPage() {
               {[0,1,2].map(i => <div key={i} className="h-32 bg-muted rounded-xl animate-pulse" />)}
             </div>
           ) : activeGoals.length === 0 ? (
-            <div className="text-center py-12 border border-dashed border-border rounded-xl">
-              <Target className="size-8 mx-auto text-muted-foreground/40 mb-3" />
-              <p className="text-sm text-muted-foreground mb-4">No active goals yet.</p>
-              <Button size="sm" variant="outline" onClick={() => setGoalDialog({ open: true })}>
-                <Plus className="size-3.5 mr-1.5" /> Add your first goal
-              </Button>
-            </div>
+            <EmptyState
+              icon={Target}
+              title="No active goals yet"
+              description="Set a goal and Athena will help you track progress toward it."
+              tone="success"
+              action={
+                <Button size="sm" variant="outline" onClick={() => setGoalDialog({ open: true })}>
+                  <Plus className="size-3.5 mr-1.5" /> Add your first goal
+                </Button>
+              }
+            />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {activeGoals.map((g) => (
@@ -453,13 +460,17 @@ function GoalsPage() {
               {[0,1].map(i => <div key={i} className="h-24 bg-muted rounded-xl animate-pulse" />)}
             </div>
           ) : activeProjects.length === 0 ? (
-            <div className="text-center py-12 border border-dashed border-border rounded-xl">
-              <FolderOpen className="size-8 mx-auto text-muted-foreground/40 mb-3" />
-              <p className="text-sm text-muted-foreground mb-4">No projects yet.</p>
-              <Button size="sm" variant="outline" onClick={() => setProjectDialog({ open: true })}>
-                <Plus className="size-3.5 mr-1.5" /> Create a project
-              </Button>
-            </div>
+            <EmptyState
+              icon={FolderOpen}
+              title="No projects yet"
+              description="Create a project to group related goals, notes, and reminders."
+              tone="info"
+              action={
+                <Button size="sm" variant="outline" onClick={() => setProjectDialog({ open: true })}>
+                  <Plus className="size-3.5 mr-1.5" /> Create a project
+                </Button>
+              }
+            />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {activeProjects.map((p) => (

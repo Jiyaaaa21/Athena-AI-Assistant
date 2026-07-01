@@ -18,6 +18,7 @@ import { Switch } from "@/components/ui/switch";
 import { Plus, Trash2, Edit2, Play, Zap, X } from "lucide-react";
 import { request, isLive } from "@/lib/api";
 import { toast } from "sonner";
+import { EmptyState } from "@/components/athena/empty-state";
 
 export const Route = createFileRoute("/routines")({
   head: () => ({ meta: [{ title: "Athena — Routines" }] }),
@@ -135,25 +136,28 @@ function RoutinesPage() {
 
   return (
     <div className="flex flex-col h-svh overflow-hidden">
-      <PageHeader
-        title="Routines"
-        description="Named multi-step voice macros — say the trigger phrase to run several actions at once."
-        actions={<Button size="sm" onClick={() => setDialog({ open: true })}><Plus className="size-3.5 mr-1.5" /> New Routine</Button>}
-      />
+      <div className="px-6 pt-8">
+        <PageHeader
+          title="Routines"
+          description="Named multi-step voice macros — say the trigger phrase to run several actions at once."
+          actions={<Button size="sm" onClick={() => setDialog({ open: true })}><Plus className="size-3.5 mr-1.5" /> New Routine</Button>}
+        />
+      </div>
       <div className="flex-1 overflow-y-auto px-6 py-6">
         {isLoading ? (
           <div className="space-y-3">{[0,1].map(i => <div key={i} className="h-24 bg-muted rounded-xl animate-pulse" />)}</div>
         ) : routines.length === 0 ? (
-          <div className="text-center py-16 border border-dashed border-border rounded-xl">
-            <Zap className="size-9 mx-auto text-muted-foreground/30 mb-3" />
-            <p className="text-sm text-muted-foreground mb-1 font-medium">No routines yet</p>
-            <p className="text-xs text-muted-foreground max-w-xs mx-auto mb-4">
-              Create one for "good morning" that checks weather, reminders, and goals all at once.
-            </p>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ open: true })}>
-              <Plus className="size-3.5 mr-1.5" /> Create your first routine
-            </Button>
-          </div>
+          <EmptyState
+            icon={Zap}
+            title="No routines yet"
+            description='Create one for "good morning" that checks weather, reminders, and goals all at once.'
+            tone="warning"
+            action={
+              <Button size="sm" variant="outline" onClick={() => setDialog({ open: true })}>
+                <Plus className="size-3.5 mr-1.5" /> Create your first routine
+              </Button>
+            }
+          />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {routines.map(r => (

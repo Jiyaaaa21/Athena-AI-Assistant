@@ -29,6 +29,7 @@ import { briefingApi, type BriefingData } from "@/lib/api";
 import { isLive, API_BASE_URL } from "@/lib/api";
 import { unlockAudioPlayback } from "@/lib/audio-unlock";
 import { useVoiceActivation } from "@/stores/voice-activation";
+import { ProactiveInsightsFeed } from "@/components/athena/proactive-insights";
 
 export const Route = createFileRoute("/")(  {
   head: () => ({
@@ -83,7 +84,19 @@ const SUGGESTED_PROMPTS = [
 // tiles), and a tightened single list merging overdue + upcoming with
 // clear status dots instead of a separate full-width warning banner.
 
-function BriefingWidget({ onSend }: { onSend: (text: string) => void }) {
+function BriefingWidget({
+  onSend,
+  suppressSpokenLine = false,
+}: {
+  onSend: (text: string) => void;
+  /** True while ProactiveInsightsFeed is already showing something —
+   *  Athena has already "spoken" once on this screen, so both the
+   *  briefing's spoken line AND its itemized overdue/upcoming list are
+   *  skipped, leaving only the aggregate counts row. Prevents the same
+   *  specific reminder title from being named three times on one screen
+   *  (insight banner + spoken line + itemized list). */
+  suppressSpokenLine?: boolean;
+}) {
   const [briefing, setBriefing] = useState<BriefingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -168,10 +181,10 @@ function BriefingWidget({ onSend }: { onSend: (text: string) => void }) {
     return (
       <div className="flex flex-col items-center text-center pt-2">
         <PresenceOrb size={56} />
-        <h2 className="text-xl font-semibold tracking-tight mt-4 mb-1.5">
+        <h2 className="athena-voice text-[26px] font-medium tracking-tight mt-4 mb-1.5">
           Good to see you, {firstName}.
         </h2>
-        <p className="text-muted-foreground text-sm max-w-xs leading-relaxed">
+        <p className="athena-voice italic text-muted-foreground text-[15px] max-w-xs leading-relaxed">
           I'm ready when you are — ask me anything, or upload a document to get started.
         </p>
       </div>
@@ -232,7 +245,7 @@ function BriefingWidget({ onSend }: { onSend: (text: string) => void }) {
       <div className="flex items-center gap-3.5 mb-1">
         <PresenceOrb size={44} active={hasTimeline} />
         <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-semibold tracking-tight leading-tight">
+          <h2 className="athena-voice text-[26px] font-medium tracking-tight leading-tight">
             {greeting}, {firstName}.
           </h2>
           <p className="text-[12px] text-muted-foreground">
@@ -248,13 +261,19 @@ function BriefingWidget({ onSend }: { onSend: (text: string) => void }) {
         </button>
       </div>
 
-      {/* Spoken line — Athena talking, not a panel label */}
-      <p className="text-[14px] text-foreground/80 leading-relaxed mt-3 mb-5 pl-[58px]">
-        "{spokenLine}"
-      </p>
+      {/* Spoken line — Athena talking, not a panel label. Skipped when
+          Athena already "spoke" via the proactive insights feed above,
+          so the same fact never gets surfaced twice in one breath. */}
+      {suppressSpokenLine ? (
+        <div className="mt-4" />
+      ) : (
+        <p className="athena-voice italic text-[16px] text-foreground/75 leading-relaxed mt-3 mb-5 pl-[58px]">
+          "{spokenLine}"
+        </p>
+      )}
 
       {!isQuiet && (
-        <div className="rounded-2xl border border-border bg-card overflow-hidden mb-5">
+        <div className="rounded-2xl border border-border/60 bg-card overflow-hidden mb-5 shadow-[0_2px_2px_-1px_rgba(0,0,0,0.03),0_12px_24px_-12px_rgba(0,0,0,0.10)] dark:shadow-[0_2px_2px_-1px_rgba(0,0,0,0.2),0_12px_24px_-12px_rgba(0,0,0,0.4)]">
           {hasStats && (
             <div className="flex items-stretch divide-x divide-border border-b border-border">
               {summary.overdue_count > 0 && (
@@ -296,7 +315,7 @@ function BriefingWidget({ onSend }: { onSend: (text: string) => void }) {
             </div>
           )}
 
-          {hasTimeline && (
+          {hasTimeline && !suppressSpokenLine && (
             <div className="px-4 py-3 space-y-0.5">
               {timeline.map((r) => (
                 <button
@@ -445,18 +464,13 @@ function BriefingWidget({ onSend }: { onSend: (text: string) => void }) {
 
 function PresenceOrb({ size = 44, active = false }: { size?: number; active?: boolean }) {
   return (
-    <div className="relative shrink-0" style={{ width: size, height: size }}>
+    <div className="relative shrink-0 grid place-items-center" style={{ width: size, height: size }}>
       <motion.div
         className="absolute inset-0 rounded-full bg-gradient-to-br from-primary to-accent"
         animate={{
           scale: active ? [1, 1.06, 1] : [1, 1.03, 1],
           opacity: active ? [0.9, 1, 0.9] : [0.85, 0.95, 0.85],
         }}
-        transition={{ duration: active ? 2.2 : 3.4, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        className="absolute inset-0 rounded-full bg-gradient-to-br from-primary/40 to-accent/40 blur-md"
-        animate={{ scale: [1.15, 1.35, 1.15], opacity: [0.4, 0.15, 0.4] }}
         transition={{ duration: active ? 2.2 : 3.4, repeat: Infinity, ease: "easeInOut" }}
       />
       <div className="absolute inset-[3px] rounded-full bg-background/10 ring-1 ring-white/20" />
@@ -481,6 +495,7 @@ function ChatHome() {
   } = useChat();
 
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const [hasInsight, setHasInsight] = useState(false);
 
   // Phase 21 fix: this effect previously called useVoice.getState()
   // .startListening() directly — a ONE-SHOT recording with no
@@ -584,9 +599,9 @@ function ChatHome() {
       {/* Message thread */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 md:px-6 py-6 pb-40 scroll-smooth"
+        className="relative z-10 flex-1 overflow-y-auto px-4 md:px-6 py-6 pb-40 scroll-smooth"
       >
-        <div className="max-w-2xl mx-auto">
+        <div className="relative max-w-2xl mx-auto">
           <AnimatePresence mode="wait">
             {isEmpty ? (
               <motion.div
@@ -594,35 +609,34 @@ function ChatHome() {
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                className="pt-8"
+                className="relative z-10 pt-8"
               >
+                {/* Phase 23: unprompted insights, shown above the briefing when present */}
+                <ProactiveInsightsFeed onHasInsightChange={setHasInsight} />
+
                 {/* Personal Briefing replaces the generic empty state */}
-                <BriefingWidget onSend={sendStream} />
+                <BriefingWidget onSend={sendStream} suppressSpokenLine={hasInsight} />
 
                 {/* Quick chips always visible below */}
                 <div className="flex flex-wrap gap-2 justify-center mt-6">
                   <QuickChip
                     icon={Upload}
                     label="Upload doc"
-                    dotClass="bg-blue-500"
                     onClick={() => (window.location.href = "/documents")}
                   />
                   <QuickChip
                     icon={Mic}
                     label="Voice mode"
-                    dotClass="bg-purple-500"
                     onClick={() => { unlockAudioPlayback(); setVoiceOpen(true); }}
                   />
                   <QuickChip
                     icon={Newspaper}
                     label="Check news"
-                    dotClass="bg-amber-500"
                     onClick={() => (window.location.href = "/news")}
                   />
                   <QuickChip
                     icon={StickyNote}
                     label="Open notes"
-                    dotClass="bg-emerald-500"
                     onClick={() => (window.location.href = "/notes")}
                   />
                 </div>

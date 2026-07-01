@@ -21,6 +21,7 @@ import { X, Settings2, Square } from "lucide-react";
 import { toast } from "sonner";
 import { VoiceOrb } from "./voice-orb";
 import { useVoice } from "@/stores/voice";
+import { useChat } from "@/stores/chat";
 import { useAuth } from "@/stores/auth";
 import { unlockAudioPlayback } from "@/lib/audio-unlock";
 import { Switch } from "@/components/ui/switch";
@@ -37,6 +38,7 @@ export function VoiceDialog({ open, onOpenChange, onSendMessage }: VoiceDialogPr
     transcript,
     athenaReply,
     waveformData,
+    speakingLevel,
     settings,
     settingsLoaded,
     permissionDenied,
@@ -62,6 +64,12 @@ export function VoiceDialog({ open, onOpenChange, onSendMessage }: VoiceDialogPr
     (o: boolean) => {
       if (!o) {
         interrupt();
+        // Phase 24 fix: same reasoning as the Stop button below — without
+        // this, closing the dialog mid-response didn't actually stop
+        // Athena. The chat SSE stream kept delivering tokens in the
+        // background, and speakIncremental() would kick speech back off
+        // the moment the next one arrived, even with the dialog gone.
+        useChat.getState().cancelStream();
         stopListening();
         stopContinuous();
         pendingRef.current = false;
@@ -278,6 +286,7 @@ export function VoiceDialog({ open, onOpenChange, onSendMessage }: VoiceDialogPr
           <VoiceOrb
             phase={phase}
             waveformData={waveformData}
+            level={speakingLevel}
             transcript={phase === "speaking" ? undefined : undefined}
             athenaReply={athenaReply}
             continuousActive={continuousActive}
@@ -311,7 +320,22 @@ export function VoiceDialog({ open, onOpenChange, onSendMessage }: VoiceDialogPr
           {/* Stop button — only while speaking, minimal */}
           {phase === "speaking" && (
             <button
-              onClick={interrupt}
+              onClick={() => {
+                // Phase 24 fix: interrupt() alone only stops the CURRENT
+                // audio and resets voice phase back to "idle" — it does
+                // nothing to the underlying chat SSE stream, which keeps
+                // generating and delivering tokens completely
+                // independently of the audio pipeline. Since
+                // speakIncremental() treats "phase !== speaking" as "start
+                // a new speaking turn," the very next token to arrive
+                // after interrupt() immediately kicked speech back off
+                // again — from the outside this looked exactly like the
+                // Stop button doing nothing. Cancelling the chat stream
+                // too means no more tokens arrive at all, so there's
+                // nothing left to restart speech.
+                interrupt();
+                useChat.getState().cancelStream();
+              }}
               className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 hover:bg-white/15 text-white/80 text-sm transition-colors"
             >
               <Square className="size-3 fill-current" /> Stop

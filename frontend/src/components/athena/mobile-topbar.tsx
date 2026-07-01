@@ -13,7 +13,7 @@ export function MobileTopbar() {
     <div className="md:hidden flex items-center justify-between px-4 h-14 border-b border-border bg-background sticky top-0 z-30">
       <Sheet>
         <SheetTrigger asChild>
-          <button aria-label="Open menu" className="p-2 rounded-md hover:bg-black/5">
+          <button aria-label="Open menu" className="p-2 rounded-md hover:bg-muted">
             <Menu className="size-4" />
           </button>
         </SheetTrigger>

@@ -24,9 +24,13 @@ import { useVoice } from "@/stores/voice";
 import {
   CheckCircle2, AlertCircle, RefreshCw, Sun, Moon, Monitor,
   Activity, Zap, Volume2, Mic, Play, Globe, CalendarDays, ExternalLink, X,
+  Bell, BellOff, BellRing, Send, Info, Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { getAccessToken } from "@/stores/auth";
+import { usePushNotifications } from "@/hooks/use-push-notifications";
+import { pushApi } from "@/lib/push-api";
+import { proactiveApi } from "@/lib/proactive-api";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
@@ -59,13 +63,13 @@ function getStoredTheme(): Theme {
 function HealthBadge({ status }: { status: string }) {
   if (status === "ok")
     return (
-      <Badge className="bg-emerald-500/15 text-emerald-700 border-emerald-200 gap-1">
+      <Badge className="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 gap-1">
         <CheckCircle2 className="size-3" /> OK
       </Badge>
     );
   if (status === "degraded")
     return (
-      <Badge className="bg-amber-500/15 text-amber-700 border-amber-200 gap-1">
+      <Badge className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800 gap-1">
         <AlertCircle className="size-3" /> Degraded
       </Badge>
     );
@@ -194,9 +198,9 @@ function CalendarSettingsSection() {
           <div className="rounded-lg border border-amber-300/40 bg-amber-50 dark:bg-amber-950/20 p-3 text-sm text-amber-800 dark:text-amber-200">
             <p className="font-medium mb-1">Calendar isn't set up on this server yet.</p>
             <p className="text-xs opacity-90">
-              Set <code className="px-1 py-0.5 rounded bg-black/10">GOOGLE_CLIENT_ID</code> and{" "}
-              <code className="px-1 py-0.5 rounded bg-black/10">GOOGLE_CLIENT_SECRET</code> in your backend's
-              .env file — see the comments in <code className="px-1 py-0.5 rounded bg-black/10">backend/core/config.py</code> for
+              Set <code className="px-1 py-0.5 rounded bg-muted">GOOGLE_CLIENT_ID</code> and{" "}
+              <code className="px-1 py-0.5 rounded bg-muted">GOOGLE_CLIENT_SECRET</code> in your backend's
+              .env file — see the comments in <code className="px-1 py-0.5 rounded bg-muted">backend/core/config.py</code> for
               the 5-minute Google Cloud Console setup steps.
             </p>
           </div>
@@ -226,6 +230,204 @@ function CalendarSettingsSection() {
             <ExternalLink className="size-3.5 mr-1.5" />
             {connectMutation.isPending ? "Redirecting…" : "Connect Google Calendar"}
           </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function PushSettingsSection() {
+  const qc = useQueryClient();
+  const { permission, loading, error, subscribe, unsubscribe } = usePushNotifications();
+
+  const statusQuery = useQuery({
+    queryKey: ["push-status"],
+    queryFn: () => pushApi.status(),
+    enabled: isLive,
+    refetchInterval: false,
+  });
+
+  const testMutation = useMutation({
+    mutationFn: () => pushApi.test(),
+    onSuccess: () => toast.success("Test notification sent — check your device."),
+    onError: (e: Error) => toast.error(e.message || "Failed to send test notification"),
+  });
+
+  const supported =
+    typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window;
+
+  const status = statusQuery.data;
+  // Bug fix: this used to be `subscribed || permission === "granted"`,
+  // which showed "Notifications on" purely because the BROWSER granted
+  // permission — even if the POST to /push/subscribe never actually
+  // succeeded (backend unreachable, VAPID not ready, network blip).
+  // That let the UI claim "on" with zero real subscriptions underneath
+  // it. The backend's device count is the only source of truth for
+  // whether a subscription is actually saved server-side.
+  const isOn = (status?.deviceCount ?? 0) > 0;
+
+  // Whatever subscribe()/unsubscribe() actually did to the backend, make
+  // sure the displayed count reflects it immediately instead of waiting
+  // on a stale cached query result.
+  const handleSubscribe = async () => {
+    await subscribe();
+    qc.invalidateQueries({ queryKey: ["push-status"] });
+  };
+  const handleUnsubscribe = async () => {
+    await unsubscribe();
+    qc.invalidateQueries({ queryKey: ["push-status"] });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Bell className="size-4 text-primary" />
+          Push Notifications
+        </CardTitle>
+        <CardDescription>
+          Get reminders and alerts as real notifications on this device — even when Athena isn't open in a tab.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {!isLive ? (
+          <p className="text-sm text-muted-foreground">Connect the backend to manage push notifications.</p>
+        ) : !supported ? (
+          <div className="rounded-lg border border-amber-300/40 bg-amber-50 dark:bg-amber-950/20 p-3 text-sm text-amber-800 dark:text-amber-200">
+            This browser doesn't support push notifications.
+          </div>
+        ) : statusQuery.isLoading ? (
+          <div className="h-12 bg-muted rounded-lg animate-pulse" />
+        ) : !status?.configured ? (
+          <div className="rounded-lg border border-amber-300/40 bg-amber-50 dark:bg-amber-950/20 p-3 text-sm text-amber-800 dark:text-amber-200">
+            <p className="font-medium mb-1">Push isn't set up on this server yet.</p>
+            <p className="text-xs opacity-90">
+              The backend generates its VAPID keypair automatically on first run — restart the backend
+              once, then refresh this page.
+            </p>
+          </div>
+        ) : permission === "denied" ? (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+            Notifications are blocked for this site. Enable them in your browser's site settings, then
+            refresh this page.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between rounded-lg border border-border bg-muted/30 px-4 py-3">
+              <div className="flex items-center gap-3">
+                <div className={`size-9 rounded-full grid place-items-center ${isOn ? "bg-emerald-100 dark:bg-emerald-900/30" : "bg-muted"}`}>
+                  {isOn ? (
+                    <BellRing className="size-4 text-emerald-600 dark:text-emerald-400" />
+                  ) : (
+                    <BellOff className="size-4 text-muted-foreground" />
+                  )}
+                </div>
+                <div>
+                  <p className="text-sm font-medium">{isOn ? "Notifications on" : "Notifications off"}</p>
+                  {isOn && (
+                    <p className="text-xs text-muted-foreground">
+                      {status?.deviceCount ?? 0} device{status?.deviceCount === 1 ? "" : "s"} subscribed
+                    </p>
+                  )}
+                </div>
+              </div>
+              {isOn ? (
+                <Button variant="outline" size="sm" onClick={handleUnsubscribe} disabled={loading}>
+                  <BellOff className="size-3.5 mr-1.5" />
+                  Turn off
+                </Button>
+              ) : (
+                <Button size="sm" onClick={handleSubscribe} disabled={loading}>
+                  <Bell className="size-3.5 mr-1.5" />
+                  {loading ? "Enabling…" : "Enable"}
+                </Button>
+              )}
+            </div>
+
+            {isOn && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => testMutation.mutate()}
+                disabled={testMutation.isPending}
+              >
+                <Send className="size-3.5 mr-1.5" />
+                {testMutation.isPending ? "Sending…" : "Send test notification"}
+              </Button>
+            )}
+
+            {isOn && (
+              <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                <Info className="size-3.5 mt-0.5 shrink-0" />
+                <p>
+                  Chrome only delivers notifications while it's running in the background. For
+                  reminders to arrive even after closing every Chrome window, enable{" "}
+                  <span className="font-medium text-foreground">
+                    "Continue running background apps when Google Chrome is closed"
+                  </span>{" "}
+                  under <span className="font-medium text-foreground">chrome://settings/system</span>.
+                </p>
+              </div>
+            )}
+
+            {error && <p className="text-xs text-destructive">{error}</p>}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ProactiveSettingsSection() {
+  const [status, setStatus] = useState<"idle" | "loading" | "done">("idle");
+  const [result, setResult] = useState<string | null>(null);
+
+  const handleTrigger = async () => {
+    setStatus("loading");
+    setResult(null);
+    try {
+      const res = await proactiveApi.trigger();
+      if (res.generated && res.insight) {
+        setResult(res.insight.message);
+        toast.success("Athena found something worth mentioning — check the home screen.");
+      } else {
+        setResult(res.reason ?? "Nothing worth surfacing right now.");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to run the proactive check");
+    } finally {
+      setStatus("done");
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Sparkles className="size-4 text-primary" />
+          Proactive Intelligence
+        </CardTitle>
+        <CardDescription>
+          Athena periodically looks at your goals, reminders, and calendar and surfaces something
+          unprompted when it's genuinely worth mentioning — shown on your home screen and, if push
+          notifications are on, delivered as a real notification too.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {!isLive ? (
+          <p className="text-sm text-muted-foreground">Connect the backend to test this.</p>
+        ) : (
+          <>
+            <Button variant="outline" size="sm" onClick={handleTrigger} disabled={status === "loading"}>
+              <Sparkles className="size-3.5 mr-1.5" />
+              {status === "loading" ? "Checking…" : "Run a check now"}
+            </Button>
+            {result && (
+              <p className="text-xs text-muted-foreground rounded-lg border border-border bg-muted/30 px-3 py-2">
+                {result}
+              </p>
+            )}
+          </>
         )}
       </CardContent>
     </Card>
@@ -330,17 +532,18 @@ function SettingsPage() {
   ];
 
   return (
-    <div className="max-w-2xl mx-auto w-full px-4 sm:px-6 py-10 space-y-6">
+    <div className="max-w-5xl mx-auto w-full px-4 sm:px-6 py-10">
       <PageHeader title="Settings" description="Tune Athena to your workflow." />
 
-      {/* ── ISSUE 10: Appearance ─────────────────────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Appearance</CardTitle>
-          <CardDescription>Theme is saved locally and persists across sessions.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-3 gap-3">
+      <div className="mt-6 grid md:grid-cols-2 gap-6 items-start">
+        {/* ── ISSUE 10: Appearance ─────────────────────────────────────────── */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Appearance</CardTitle>
+            <CardDescription>Theme is saved locally and persists across sessions.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-3 gap-3">
             {(
               [
                 { value: "light", label: "Light", Icon: Sun },
@@ -361,14 +564,20 @@ function SettingsPage() {
                 {label}
               </button>
             ))}
-          </div>
-        </CardContent>
-      </Card>
+            </div>
+          </CardContent>
+        </Card>
 
-      {/* ── Phase 20: Google Calendar ──────────────────────────────────── */}
-      <CalendarSettingsSection />
+        {/* ── Phase 20: Google Calendar ──────────────────────────────────── */}
+        <CalendarSettingsSection />
+
+        <PushSettingsSection />
+
+        <ProactiveSettingsSection />
+      </div>
 
       {/* ── ISSUE 9 + 11: Voice OS Settings (cleaned up + wake word) ─────── */}
+      <div className="mt-6">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -470,25 +679,27 @@ function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+      </div>
 
-      {/* ── ISSUE 9: Simplified notifications ────────────────────────────── */}
-      <Card>
-        <CardHeader><CardTitle>Notifications</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <Row label="Reminder alerts" description="Get notified when a reminder is due.">
-            <Switch
-              checked={prefs.notifications ?? true}
-              onCheckedChange={(v) => setPref("notifications", v)}
-            />
-          </Row>
-        </CardContent>
-      </Card>
+      <div className="mt-6 grid md:grid-cols-2 gap-6 items-start">
+        {/* ── ISSUE 9: Simplified notifications ────────────────────────────── */}
+        <Card>
+          <CardHeader><CardTitle>Notifications</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <Row label="Reminder alerts" description="Get notified when a reminder is due.">
+              <Switch
+                checked={prefs.notifications ?? true}
+                onCheckedChange={(v) => setPref("notifications", v)}
+              />
+            </Row>
+          </CardContent>
+        </Card>
 
-      {/* ── Phase 14: Timezone ───────────────────────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Globe className="size-4 text-primary" />
+        {/* ── Phase 14: Timezone ───────────────────────────────────────────── */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Globe className="size-4 text-primary" />
             Timezone
           </CardTitle>
           <CardDescription>
@@ -568,8 +779,10 @@ function SettingsPage() {
           </Row>
         </CardContent>
       </Card>
+      </div>
 
       {/* ── API Health ────────────────────────────────────────────────────── */}
+      <div className="mt-6">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -587,7 +800,7 @@ function SettingsPage() {
               </div>
             </div>
             {isLive ? (
-              <Badge className="bg-emerald-500/15 text-emerald-700 border-emerald-200 gap-1">
+              <Badge className="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 gap-1">
                 <CheckCircle2 className="size-3" /> Live
               </Badge>
             ) : (
@@ -636,6 +849,7 @@ function SettingsPage() {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

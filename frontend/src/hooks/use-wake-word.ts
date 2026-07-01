@@ -63,17 +63,31 @@ export function useWakeWord({
       }
     };
 
-    recognition.onerror = () => {
-      // Auto-restart on recoverable errors
-      if (activeRef.current) {
-        setTimeout(() => { if (activeRef.current) start(); }, 1000);
-      }
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      // Phase 24 fix: "no-speech" fires constantly during normal
+      // continuous listening (any few-second gap where nobody's talking
+      // triggers it) -- it's not a real error, just Chrome's way of
+      // saying "nothing to report." Treating it the same as a genuine
+      // error (network failure, mic permission revoked) and waiting a
+      // full second before restarting meant the wake-word listener spent
+      // a real chunk of its life sitting idle after every quiet moment --
+      // directly adding to "why did it take so long to notice I said the
+      // wake word." Restart it almost immediately instead; reserve the
+      // longer backoff for errors that are actually unusual.
+      if (!activeRef.current) return;
+      const isNoSpeech = event?.error === "no-speech";
+      setTimeout(() => { if (activeRef.current) start(); }, isNoSpeech ? 50 : 1000);
     };
 
     recognition.onend = () => {
-      // Restart if still supposed to be active
+      // Restart if still supposed to be active. Phase 24: shortened from
+      // 200ms -- Chrome's SpeechRecognition doesn't support truly
+      // unbounded continuous listening and silently ends the session
+      // periodically even with no error at all; every one of those
+      // silent restarts was adding 200ms of dead air where a spoken wake
+      // word simply wouldn't be heard.
       if (activeRef.current) {
-        setTimeout(() => { if (activeRef.current) start(); }, 200);
+        setTimeout(() => { if (activeRef.current) start(); }, 50);
       }
     };
 

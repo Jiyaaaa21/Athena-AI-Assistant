@@ -78,7 +78,7 @@ export function AppSidebar() {
         {collapsed ? <AthenaLogo /> : <AthenaWordmark />}
         <button
           onClick={toggle}
-          className="text-muted-foreground hover:text-foreground p-1 rounded-md hover:bg-black/5"
+          className="text-muted-foreground hover:text-foreground p-1 rounded-md hover:bg-muted"
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {collapsed ? <PanelLeft className="size-4" /> : <PanelLeftClose className="size-4" />}
@@ -90,7 +90,7 @@ export function AppSidebar() {
         <Link
           to="/"
           onClick={() => resetChat()}
-          className="w-full flex items-center justify-between bg-white border border-border px-3 py-2 rounded-lg text-sm font-medium shadow-xs hover:border-primary/30 transition-colors"
+          className="w-full flex items-center justify-between bg-card border border-border px-3 py-2 rounded-lg text-sm font-medium shadow-xs hover:border-primary/30 transition-colors"
         >
           <span className="flex items-center gap-2">
             <Plus className="size-4 text-primary" />
@@ -109,7 +109,7 @@ export function AppSidebar() {
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={handleSearchKey}
               placeholder="Search… (Enter)"
-              className="h-8 pl-8 text-xs bg-white"
+              className="h-8 pl-8 text-xs bg-card"
             />
           </div>
         )}
@@ -129,8 +129,8 @@ export function AppSidebar() {
               className={cn(
                 "flex items-center gap-3 px-3 py-1.5 rounded-md text-sm transition-colors",
                 active
-                  ? "bg-primary/10 text-primary font-medium"
-                  : "text-muted-foreground hover:bg-black/5 hover:text-foreground",
+                  ? "athena-nav-active"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 collapsed && "justify-center",
               )}
               title={collapsed ? item.label : undefined}
@@ -147,7 +147,7 @@ export function AppSidebar() {
         <div className="px-3 mt-2 shrink-0">
           <button
             onClick={() => setKnowledgeOpen((o) => !o)}
-            className="flex items-center justify-between w-full px-3 py-1 text-[10px] uppercase tracking-widest text-muted-foreground/70 font-semibold hover:text-muted-foreground transition-colors rounded-md hover:bg-black/5"
+            className="flex items-center justify-between w-full px-3 py-1 text-[10px] uppercase tracking-widest text-muted-foreground/70 font-semibold hover:text-muted-foreground transition-colors rounded-md hover:bg-muted"
           >
             <span>Knowledge</span>
             {knowledgeOpen
@@ -168,8 +168,8 @@ export function AppSidebar() {
                     className={cn(
                       "flex items-center gap-3 px-3 py-1.5 rounded-md text-sm transition-colors",
                       active
-                        ? "bg-primary/10 text-primary font-medium"
-                        : "text-muted-foreground hover:bg-black/5 hover:text-foreground",
+                        ? "athena-nav-active"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
                     )}
                   >
                     <Icon className="size-4 shrink-0" />
@@ -196,8 +196,8 @@ export function AppSidebar() {
                 className={cn(
                   "flex items-center justify-center px-3 py-1.5 rounded-md text-sm transition-colors",
                   active
-                    ? "bg-primary/10 text-primary font-medium"
-                    : "text-muted-foreground hover:bg-black/5 hover:text-foreground",
+                    ? "athena-nav-active"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
                 title={item.label}
               >
@@ -213,7 +213,7 @@ export function AppSidebar() {
         <div className="px-3 mt-2 shrink-0">
           <button
             onClick={() => setLiveOpen((o) => !o)}
-            className="flex items-center justify-between w-full px-3 py-1 text-[10px] uppercase tracking-widest text-muted-foreground/70 font-semibold hover:text-muted-foreground transition-colors rounded-md hover:bg-black/5"
+            className="flex items-center justify-between w-full px-3 py-1 text-[10px] uppercase tracking-widest text-muted-foreground/70 font-semibold hover:text-muted-foreground transition-colors rounded-md hover:bg-muted"
           >
             <span>Live</span>
             {liveOpen
@@ -234,8 +234,8 @@ export function AppSidebar() {
                     className={cn(
                       "flex items-center gap-3 px-3 py-1.5 rounded-md text-sm transition-colors",
                       active
-                        ? "bg-primary/10 text-primary font-medium"
-                        : "text-muted-foreground hover:bg-black/5 hover:text-foreground",
+                        ? "athena-nav-active"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
                     )}
                   >
                     <Icon className="size-4 shrink-0" />
@@ -262,8 +262,8 @@ export function AppSidebar() {
                 className={cn(
                   "flex items-center justify-center px-3 py-1.5 rounded-md text-sm transition-colors",
                   active
-                    ? "bg-primary/10 text-primary font-medium"
-                    : "text-muted-foreground hover:bg-black/5 hover:text-foreground",
+                    ? "athena-nav-active"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
                 title={item.label}
               >
@@ -279,7 +279,7 @@ export function AppSidebar() {
         <div className="px-3 mt-2 shrink-0">
           <button
             onClick={() => setAgentOpen((o) => !o)}
-            className="flex items-center justify-between w-full px-3 py-1 text-[10px] uppercase tracking-widest text-muted-foreground/70 font-semibold hover:text-muted-foreground transition-colors rounded-md hover:bg-black/5"
+            className="flex items-center justify-between w-full px-3 py-1 text-[10px] uppercase tracking-widest text-muted-foreground/70 font-semibold hover:text-muted-foreground transition-colors rounded-md hover:bg-muted"
           >
             <span className="flex items-center gap-1.5">
               <Cpu className="size-3 text-primary/60" />
@@ -309,8 +309,8 @@ export function AppSidebar() {
           className={cn(
             "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
             pathname === "/settings"
-              ? "bg-primary/10 text-primary font-medium"
-              : "text-muted-foreground hover:bg-black/5 hover:text-foreground",
+              ? "athena-nav-active"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground",
             collapsed && "justify-center",
           )}
           title={collapsed ? "Settings" : undefined}
@@ -319,7 +319,7 @@ export function AppSidebar() {
           {!collapsed && "Settings"}
         </Link>
         {!collapsed && (
-          <div className="mt-2 p-2 bg-white/60 rounded-lg border border-border/60 flex items-center gap-2">
+          <div className="mt-2 p-2 bg-card/60 rounded-lg border border-border/60 flex items-center gap-2">
             <div className="size-7 rounded-full bg-gradient-to-br from-primary/30 to-accent/30 ring-1 ring-black/5 shrink-0" />
             <div className="flex flex-col min-w-0 flex-1">
               <span className="text-xs font-medium truncate">{user?.name ?? "Athena User"}</span>
@@ -328,7 +328,7 @@ export function AppSidebar() {
             <button
               onClick={handleLogout}
               title="Sign out"
-              className="shrink-0 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-black/5 transition-colors"
+              className="shrink-0 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             >
               <LogOut className="size-3.5" />
             </button>

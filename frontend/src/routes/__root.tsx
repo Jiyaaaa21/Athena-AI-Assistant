@@ -92,12 +92,35 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:description", content: "A premium AI workspace combining chat, RAG, voice, and productivity." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
+      // Phase 21: PWA — installable app + status bar theming
+      { name: "theme-color", content: "#2563EB" },
+      { name: "mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
+      { name: "apple-mobile-web-app-title", content: "Athena" },
     ],
     links: [
+      {
+        rel: "preconnect",
+        href: "https://fonts.googleapis.com",
+      },
+      {
+        rel: "preconnect",
+        href: "https://fonts.gstatic.com",
+        crossOrigin: "anonymous",
+      },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&display=swap",
+      },
       {
         rel: "stylesheet",
         href: appCss,
       },
+      // Phase 21: PWA manifest + icons
+      { rel: "manifest", href: "/manifest.json" },
+      { rel: "icon", href: "/icons/icon-192.png" },
+      { rel: "apple-touch-icon", href: "/icons/icon-192.png" },
     ],
   }),
   shellComponent: RootShell,
@@ -123,6 +146,18 @@ function RootShell({ children }: { children: ReactNode }) {
               }
             } catch(e) {}
           })();
+        `}} />
+        {/* Phase 21: register the push-notification service worker. Runs
+            after load so it never competes with the initial page render
+            for bandwidth/CPU; registration itself is idempotent (calling
+            it again just returns the existing registration), so this is
+            safe to run on every full page load. */}
+        <script dangerouslySetInnerHTML={{ __html: `
+          if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+              navigator.serviceWorker.register('/sw.js').catch(function() {});
+            });
+          }
         `}} />
       </head>
       <body>

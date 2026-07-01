@@ -33,7 +33,7 @@ _WEB_KEYWORDS = {
     "news", "latest", "current", "today", "happening", "recent",
     "update", "headlines", "what's new", "trending", "breaking",
     "announcement", "event", "events", "weather", "temperature",
-    "search for", "look up", "find information", "tell me about",
+    "search for", "look up", "find information",
 }
 
 _WEATHER_KEYWORDS = ("weather", "temperature", "humidity", "forecast", "rain",

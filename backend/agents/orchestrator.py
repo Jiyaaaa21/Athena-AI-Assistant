@@ -31,6 +31,8 @@ from backend.agents.timer_agent import TimerAgent
 from backend.agents.calendar_agent import CalendarAgent
 from backend.agents.rag_agent import RAGAgent
 from backend.agents.web_search_agent import WebSearchAgent
+from backend.agents.email_agent import EmailAgent
+from backend.agents.action_agent import ActionAgent
 from backend.core.llm import (
     ask_llm_raw, ask_llm_with_memory, ask_llm_with_memory_stream,
 )
@@ -48,6 +50,8 @@ ALL_AGENTS: list[BaseAgent] = [
     CalendarAgent(),
     RAGAgent(),
     WebSearchAgent(),
+    EmailAgent(),
+    ActionAgent(),
 ]
 
 AGENT_MAP: dict[str, BaseAgent] = {a.name: a for a in ALL_AGENTS}
@@ -83,7 +87,10 @@ _QUESTION_AGENT_HINTS: dict[str, str] = {
     "rename":   "note",
     "goal":     "planner",
     "project":  "planner",
-    "time":     "reminder",   # "what time would you like" → reminder
+    "time":     "reminder",
+    "send this": "email",
+    "should i send": "email",
+    "trigger": "action",   
 }
 
 
@@ -92,6 +99,20 @@ def _detect_pending_agent(last_assistant_text: str) -> str | None:
     If the last Athena message was a clarifying question mid-task,
     return the agent name that should handle the follow-up.
     Returns None if the conversation is not mid-task.
+
+    Phase 22 fix: hints are checked longest-keyword-first instead of in
+    dict insertion order. Previously a short generic word like "project"
+    (-> "planner") could match inside unrelated content further down the
+    message -- e.g. an EmailAgent draft with the subject "Project
+    update" -- and win over a more specific hint like "should i send"
+    (-> "email") simply because it appeared earlier in the dict.
+    Real case this fixed: a user confirmed an email draft titled
+    "Project update" with "yes", and the pending-state lock incorrectly
+    routed to the planner agent instead of back to email, because
+    "project" was checked before "should i send" and both are substrings
+    of the same draft text. Checking longest keywords first makes
+    specific multi-word phrases always take priority over short
+    single-word ones, regardless of dict order or draft content.
     """
     if not last_assistant_text:
         return None
@@ -102,8 +123,11 @@ def _detect_pending_agent(last_assistant_text: str) -> str | None:
     if not is_question:
         return None
 
-    # Identify which agent was asking
-    for hint_kw, agent_name in _QUESTION_AGENT_HINTS.items():
+    # Identify which agent was asking — longest/most specific hint wins.
+    sorted_hints = sorted(
+        _QUESTION_AGENT_HINTS.items(), key=lambda kv: len(kv[0]), reverse=True
+    )
+    for hint_kw, agent_name in sorted_hints:
         if hint_kw in text_lower:
             return agent_name
 
@@ -158,6 +182,132 @@ def _needs_multi_agent(query: str) -> bool:
     q = query.lower()
     hits = sum(1 for a in ALL_AGENTS if a.can_handle(q))
     return hits >= 2 or any(kw in q for kw in _MULTI_AGENT_KEYWORDS)
+
+
+# ── Phase 23: Multi-step chain trigger ────────────────────────────────────────
+# Distinct from _needs_multi_agent above: that path runs 2+ agents on the SAME
+# original query independently and synthesises their answers side by side --
+# fine for "research X and also note that I like Y" where the two halves don't
+# depend on each other. It falls short for genuinely sequential requests where
+# step 2 needs to know what step 1 produced ("find a good pizza place near me
+# and remind me to order at 7pm" -- the reminder should reference the place
+# step 1 actually found, not just run blind on the full original sentence).
+
+_SEQUENTIAL_CONNECTORS = {
+    " then ", " after that", " once that", " once you", " once done",
+    " and then ", " next, ", " after doing ",
+}
+# Phase 24 fix: "first " and bare "next, " were too weak a signal on
+# their own -- ordinary voice queries like "what's the first thing on my
+# calendar today" or "who's up next" would match, and since _needs_chain
+# firing means _build_chain_plan() runs (an extra synchronous LLM call)
+# BEFORE any status/token is yielded to the stream, a false positive here
+# silently added a full extra round-trip of latency to what should have
+# been an instant single-agent answer. Removed "first " entirely and
+# require connectors to appear as whole-word phrases with surrounding
+# spaces, so they only match genuine multi-step phrasing ("first check
+# my calendar, then remind me...") rather than incidental word overlap.
+
+
+def _needs_chain(query: str) -> bool:
+    q = f" {query.lower()} "
+    hits = sum(1 for a in ALL_AGENTS if a.can_handle(query))
+    has_connector = any(kw in q for kw in _SEQUENTIAL_CONNECTORS)
+    return hits >= 2 and has_connector
+
+
+def _build_chain_plan(query: str) -> list[dict]:
+    """
+    Asks the LLM to decompose a sequential multi-step request into an
+    ordered plan of {agent, instruction} steps. Returns [] if the LLM's
+    response can't be parsed or names an unknown agent -- callers must
+    treat an empty plan as "fall back to normal multi-agent handling",
+    never as "run zero steps and say nothing".
+    """
+    agent_descriptions = "\n".join(f'- "{a.name}": {a.description}' for a in ALL_AGENTS)
+    prompt = (
+        "You are Athena's task planner. The user's request has multiple, "
+        "SEQUENTIAL steps -- a later step may depend on what an earlier step "
+        "produces. Break it into an ordered list of steps, each assigned to "
+        "exactly one specialist agent.\n\n"
+        f"Available agents:\n{agent_descriptions}\n\n"
+        f"User request: {query}\n\n"
+        "Respond with ONLY a JSON array, nothing else, in exactly this shape:\n"
+        '[{"agent": "agent_name", "instruction": "what this step should do, '
+        'written as a standalone instruction"}, ...]\n\n'
+        "Keep it to the minimum steps actually needed (usually 2-3). Every "
+        '"agent" value must be one of the agent names listed above exactly.'
+    )
+    raw = ask_llm_raw(prompt).strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+
+    try:
+        import json as _json
+        steps = _json.loads(raw)
+    except Exception:
+        agent_logger.warning(f"[Orchestrator] chain plan not valid JSON: {raw[:200]!r}")
+        return []
+
+    plan = []
+    for step in steps:
+        name = (step.get("agent") or "").strip()
+        instruction = (step.get("instruction") or "").strip()
+        if name in AGENT_MAP and instruction:
+            plan.append({"agent": name, "instruction": instruction})
+    return plan
+
+
+def _execute_chain(plan: list[dict]) -> list[AgentResult]:
+    """
+    Runs each planned step in order, feeding the previous step's answer
+    into the next step's instruction as extra context -- this is the
+    actual "chaining" part: step 2 sees what step 1 produced instead of
+    only ever seeing the original user sentence.
+    """
+    results: list[AgentResult] = []
+    prior_context = ""
+    for step in plan:
+        agent = AGENT_MAP[step["agent"]]
+        instruction = step["instruction"]
+        if prior_context:
+            instruction = (
+                f"{instruction}\n\n"
+                f"(Context from the previous step of this task: {prior_context})"
+            )
+        try:
+            r = agent.run(instruction)
+            results.append(r)
+            prior_context = r.answer[:500]
+        except Exception as e:
+            agent_logger.error(f"[Orchestrator] chain step failed ({step['agent']}): {e}")
+            results.append(AgentResult(
+                answer=f"(This step failed: {e})",
+                agent_name=step["agent"],
+                steps=[f"Chain step failed: {step['instruction']}"],
+            ))
+    return results
+
+
+def _synthesise_chain(query: str, plan: list[dict], results: list[AgentResult]) -> str:
+    combined = "\n\n---\n\n".join(
+        f"[STEP {i+1}: {step['agent'].upper()}] {step['instruction']}\n→ {r.answer}"
+        for i, (step, r) in enumerate(zip(plan, results))
+    )
+    prompt = (
+        f"You are Athena. You just completed a multi-step task for the user by "
+        f"running each step through a specialist agent in order.\n\n"
+        f"Original request: {query}\n\n"
+        f"Steps completed:\n{combined}\n\n"
+        f"Confirm what happened at each step in plain language, in your own words "
+        f"-- don't just restate the raw agent outputs. Keep it as short as the "
+        f"actual result allows; a two-step task usually needs two sentences, not "
+        f"a formal report."
+    )
+    return ask_llm_raw(prompt)
 
 
 # ── LLM Router ────────────────────────────────────────────────────────────────
@@ -220,8 +370,10 @@ def _synthesise_multi(query: str, results: list[AgentResult]) -> str:
         f"You are Athena. Multiple specialist agents have contributed answers.\n\n"
         f"Original Question: {query}\n\n"
         f"Agent Responses:\n{combined}\n\n"
-        f"Synthesise into ONE cohesive, well-structured response that addresses "
-        f"the full question without duplication. Reads as a single unified answer."
+        f"Synthesise into ONE unified answer in your own words, without duplication. "
+        f"Match the length and structure to what the combined content actually "
+        f"needs -- don't add headings or sections just because there were multiple "
+        f"sources; most of the time a couple of connected sentences is enough."
     )
     return ask_llm_raw(prompt)
 
@@ -236,7 +388,12 @@ def _get_proactive_hint(query: str) -> str:
         for r in overdue[:3]:
             keywords = r.lower().split()
             if any(kw in query.lower() for kw in keywords if len(kw) > 4):
-                return f"\n\n💡 *By the way — you have an overdue reminder: **{r}***"
+                # Phase 24 fix: the emoji + italics + bold "💡 *By the way...*"
+                # template was another hardcoded string bypassing the LLM's
+                # tone tuning entirely -- it looked exactly like the canned
+                # chatbot styling the rest of Athena was deliberately tuned
+                # away from. A plain aside, appended as a normal sentence.
+                return f"\n\nBy the way — you still have \"{r}\" overdue."
         return ""
     except Exception:
         return ""
@@ -315,6 +472,16 @@ def _resolve_agent(query: str) -> tuple[str, list[str]]:
         agent_logger.info(f"[Orchestrator] → heuristic (single match): {heuristic_matches[0].name}")
         return "single", [heuristic_matches[0].name]
 
+    # Layer 1.5 (Phase 23): 2+ agents matched AND the phrasing has a
+    # sequential connector ("...then...", "first...then...") — this is a
+    # dependent multi-step task, not independent parallel sub-questions.
+    # Handled by the chain planner instead of the plain multi-agent path
+    # below, since the plain path runs every agent on the same original
+    # query and can't pass step 1's result into step 2.
+    if _needs_chain(query):
+        agent_logger.info("[Orchestrator] → sequential connector detected: attempting chain plan")
+        return "chain", []
+
     # 2+ distinct agents matched — genuinely ambiguous, worth the LLM
     # router's extra latency to pick correctly (or decide on multi-agent
     # collaboration).
@@ -362,6 +529,29 @@ def route_and_run(query: str, conv_id: int | None = None) -> AgentResult:
         agent_logger.warning(f"[Orchestrator] Routine matching failed (non-fatal): {e}")
 
     mode, selected_names = _resolve_agent(query)
+
+    if mode == "chain":
+        plan = _build_chain_plan(query)
+        if not plan:
+            # Planner couldn't produce a usable step list -- fall back to
+            # the ordinary multi-agent path (run heuristic matches on the
+            # original query, synthesise) rather than silently doing
+            # nothing.
+            agent_logger.info("[Orchestrator] chain plan empty, falling back to multi-agent")
+            mode, selected_names = _llm_route(query)
+        else:
+            agent_logger.info(f"[Orchestrator] chain plan: {[s['agent'] for s in plan]}")
+            results = _execute_chain(plan)
+            if not results:
+                return _conversational_response(query)
+            synthesised = _synthesise_chain(query, plan, results)
+            return AgentResult(
+                answer=synthesised,
+                agent_name="chain:" + "+".join(r.agent_name for r in results),
+                sources=[s for r in results for s in r.sources],
+                steps=[f"Step {i+1} [{plan[i]['agent']}]: {plan[i]['instruction']}" for i in range(len(plan))],
+                metadata={"agents_used": [r.agent_name for r in results], "chain": True},
+            )
 
     if mode == "none" or not selected_names:
         return _conversational_response(query)
@@ -436,6 +626,41 @@ def route_and_stream(
         agent_logger.warning(f"[Orchestrator] Routine matching failed in stream (non-fatal): {e}")
 
     mode, selected_names = _resolve_agent(query)
+
+    if mode == "chain":
+        plan = _build_chain_plan(query)
+        if not plan:
+            agent_logger.info("[Orchestrator] chain plan empty (stream), falling back to multi-agent")
+            mode, selected_names = _llm_route(query)
+        else:
+            agent_logger.info(f"[Orchestrator] chain plan (stream): {[s['agent'] for s in plan]}")
+            for i, step in enumerate(plan):
+                yield {"type": "status", "text": f"Step {i+1}/{len(plan)}: {step['agent']} agent…", "agent": step["agent"]}
+            results = _execute_chain(plan)
+            if not results:
+                yield {"type": "status", "text": "Athena is thinking…", "agent": None}
+                full = ""
+                for chunk in ask_llm_with_memory_stream(query):
+                    full += chunk
+                    yield {"type": "token", "text": chunk}
+                result = AgentResult(answer=full, agent_name="athena", steps=["Conversational response"])
+                yield {"type": "done", "result": result}
+                return result
+
+            yield {"type": "status", "text": "Summarising the completed steps…", "agent": None}
+            synthesised = _synthesise_chain(query, plan, results)
+            words = synthesised.split(" ")
+            for i, word in enumerate(words):
+                yield {"type": "token", "text": word + (" " if i < len(words) - 1 else "")}
+            result = AgentResult(
+                answer=synthesised,
+                agent_name="chain:" + "+".join(r.agent_name for r in results),
+                sources=[s for r in results for s in r.sources],
+                steps=[f"Step {i+1} [{plan[i]['agent']}]: {plan[i]['instruction']}" for i in range(len(plan))],
+                metadata={"agents_used": [r.agent_name for r in results], "chain": True},
+            )
+            yield {"type": "done", "result": result}
+            return result
 
     if mode == "none" or not selected_names:
         yield {"type": "status", "text": "Athena is thinking…", "agent": None}

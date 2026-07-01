@@ -159,7 +159,7 @@ export function Message({
             {!isStreaming && (
               <button
                 onClick={copy}
-                className="text-muted-foreground hover:text-foreground text-xs flex items-center gap-1 px-2 py-1 rounded hover:bg-black/5 transition-colors"
+                className="text-muted-foreground hover:text-foreground text-xs flex items-center gap-1 px-2 py-1 rounded hover:bg-muted transition-colors"
                 aria-label="Copy"
               >
                 {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
@@ -170,7 +170,7 @@ export function Message({
             {isStreaming && onCancel && (
               <button
                 onClick={onCancel}
-                className="text-muted-foreground hover:text-destructive text-xs flex items-center gap-1 px-2 py-1 rounded hover:bg-black/5 transition-colors"
+                className="text-muted-foreground hover:text-destructive text-xs flex items-center gap-1 px-2 py-1 rounded hover:bg-muted transition-colors"
                 aria-label="Stop generating"
               >
                 <Square className="size-3" />
@@ -181,7 +181,7 @@ export function Message({
             {isLast && !isStreaming && onRegenerate && (
               <button
                 onClick={onRegenerate}
-                className="text-muted-foreground hover:text-foreground text-xs flex items-center gap-1 px-2 py-1 rounded hover:bg-black/5 transition-colors"
+                className="text-muted-foreground hover:text-foreground text-xs flex items-center gap-1 px-2 py-1 rounded hover:bg-muted transition-colors"
                 aria-label="Regenerate"
               >
                 <RotateCcw className="size-3" />

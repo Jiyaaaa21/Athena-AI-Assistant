@@ -28,10 +28,12 @@ from backend.api.user_memory import router as user_memory_router
 from backend.api.timers import router as timers_router
 from backend.api.routines import router as routines_router
 from backend.api.calendar import router as calendar_router, public_router as calendar_public_router
+from backend.api.push import router as push_router, public_router as push_public_router
 from backend.api.goals import router as goals_router
 from backend.api.projects import router as projects_router
 from backend.api.briefing import router as briefing_router
 from backend.api.assistant import router as assistant_router
+from backend.api.proactive import router as proactive_router
 
 from backend.core.config import ALLOWED_ORIGINS
 from backend.database.migrate import run_migrations
@@ -103,9 +105,23 @@ def on_startup():
     os.makedirs("data/avatars", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
     run_migrations()
+    # Phase 21: Generate (or load persisted) VAPID keypair for Web Push.
+    # Runs before the reminder scheduler below, since it now calls
+    # send_push_to_user() on every fired reminder -- send_push_to_user()
+    # itself degrades gracefully (returns 0, logs a warning) if VAPID
+    # somehow isn't ready, but there's no reason to race it.
+    from backend.core.push_vapid import ensure_vapid_keys
+    ensure_vapid_keys()
     # Phase 16: Start reminder firing scheduler
     from backend.core.reminder_scheduler import start_scheduler
     start_scheduler()
+    # Phase 23: Start the proactive-intelligence engine (periodically
+    # evaluates each user's context and, occasionally, pushes an
+    # unprompted insight -- see core/proactive_engine.py). Started after
+    # the reminder scheduler for no strict reason other than reading
+    # top-to-bottom as "reactive stuff first, proactive stuff second".
+    from backend.core.proactive_engine import start_engine
+    start_engine()
 
 
 # ── Phase 11/12: route protection ────────────────────────────────────────────
@@ -155,11 +171,14 @@ app.include_router(goals_router, dependencies=_auth_required)
 app.include_router(projects_router, dependencies=_auth_required)
 app.include_router(briefing_router, dependencies=_auth_required)
 app.include_router(assistant_router, dependencies=_auth_required)
+app.include_router(proactive_router, dependencies=_auth_required)
 app.include_router(user_memory_router, dependencies=_auth_required)
 app.include_router(timers_router, dependencies=_auth_required)
 app.include_router(routines_router, dependencies=_auth_required)
 app.include_router(calendar_router, dependencies=_auth_required)
 app.include_router(calendar_public_router)  # OAuth callback — no JWT, Google redirects here directly
+app.include_router(push_router, dependencies=_auth_required)
+app.include_router(push_public_router)  # vapid-public-key — no JWT, needed before subscribe flow
 
 
 @app.get("/")

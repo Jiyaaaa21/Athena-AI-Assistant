@@ -22,7 +22,10 @@ from backend.core.logger import agent_logger as logger
 from backend.database.db import SessionLocal
 from backend.core.request_context import get_current_user_id
 from backend.voice.stt import transcribe_audio
-from backend.voice.tts import VOICE_CATALOGUE, synthesize, synthesize_chunk, split_into_speakable_chunks
+from backend.voice.tts import (
+    VOICE_CATALOGUE, synthesize, synthesize_stream_async,
+    split_into_speakable_chunks, prepare_voice_params,
+)
 
 router = APIRouter(prefix="/voice", tags=["voice"])
 
@@ -211,40 +214,75 @@ async def speak_stream(body: SpeakRequest):
         raise HTTPException(status_code=400, detail="No speakable content after cleaning text")
 
     async def _frame_generator():
-        import asyncio
+        import time
+
+        voice, rate_str, vol_str = prepare_voice_params(voice_id, speed, volume)
         chunks_synthesized = 0
         chunks_failed = 0
+
         for i, chunk_text in enumerate(chunks):
             try:
-                # synthesize_chunk is sync (thread-pooled internally); run
-                # it off the event loop so other requests aren't blocked
-                # while this chunk renders.
-                audio_bytes = await asyncio.to_thread(
-                    synthesize_chunk, chunk_text, voice_id, speed, volume
-                )
+                # ── Phase 24 fix (real cause of "voice trails text") ────────
+                # This used to call synthesize_chunk(), which buffers the
+                # ENTIRE chunk's audio in memory before returning anything —
+                # so even a single sentence had to finish synthesizing
+                # completely, server-side, before the browser received one
+                # byte. synthesize_stream_async() is the true-streaming path
+                # that was already written (Phase 17) but never actually
+                # wired into this endpoint. edge-tts's underlying protocol
+                # genuinely streams audio as Microsoft's service produces
+                # it, so switching to this gets real, not cosmetic,
+                # time-to-first-audio improvement — the first sound reaches
+                # the browser as soon as the first fraction of a second of
+                # speech exists, not after the whole sentence does.
+                #
+                # Raw chunks straight off the websocket can be very small
+                # (sometimes well under one MP3 frame), and the frontend's
+                # StreamingPlaybackQueue treats each frame it receives as an
+                # independent, separately-decodable <audio> source — too
+                # fine-grained a raw chunk risks a frame that won't decode
+                # on its own, producing an audible gap. So this buffers just
+                # long enough to get a safely-decodable amount of audio,
+                # flushing on a short timer rather than waiting for the
+                # whole chunk: the FIRST flush goes out almost immediately
+                # (50ms window) so time-to-first-audio stays low, and
+                # subsequent flushes use a slightly wider window (150ms) to
+                # keep the number of separate <audio> elements reasonable
+                # for smooth back-to-back playback.
+                first_flush_done = False
+                audio_buffer = bytearray()
+                window_start = time.monotonic()
+                any_audio_this_chunk = False
+
+                async for audio_bytes in synthesize_stream_async(chunk_text, voice, rate_str, vol_str):
+                    audio_buffer.extend(audio_bytes)
+                    any_audio_this_chunk = True
+                    window_s = 0.05 if not first_flush_done else 0.15
+                    if audio_buffer and (time.monotonic() - window_start) >= window_s:
+                        length_prefix = len(audio_buffer).to_bytes(4, byteorder="big")
+                        yield length_prefix
+                        yield bytes(audio_buffer)
+                        audio_buffer.clear()
+                        window_start = time.monotonic()
+                        first_flush_done = True
+
+                if audio_buffer:
+                    length_prefix = len(audio_buffer).to_bytes(4, byteorder="big")
+                    yield length_prefix
+                    yield bytes(audio_buffer)
+
+                if not any_audio_this_chunk:
+                    raise RuntimeError("edge-tts returned empty audio for this chunk")
+
                 chunks_synthesized += 1
                 logger.info(
-                    "[voice/speak/stream] chunk %d/%d synthesized: %d bytes for %r",
-                    i + 1, len(chunks), len(audio_bytes), chunk_text[:60],
+                    "[voice/speak/stream] chunk %d/%d streamed for %r",
+                    i + 1, len(chunks), chunk_text[:60],
                 )
-            except RuntimeError as exc:
+            except Exception as exc:
                 chunks_failed += 1
                 logger.warning("[voice/speak/stream] chunk %d/%d FAILED, skipping: %s", i + 1, len(chunks), exc)
                 continue
-            except Exception as exc:
-                # Catch anything beyond the expected RuntimeError too —
-                # previously an unexpected exception type here would
-                # propagate up and silently kill the whole generator,
-                # ending the stream with zero frames sent and no log line
-                # explaining why every chunk after the first failure
-                # vanished.
-                chunks_failed += 1
-                logger.error("[voice/speak/stream] chunk %d/%d UNEXPECTED error, skipping: %s: %s", i + 1, len(chunks), type(exc).__name__, exc)
-                continue
-
-            length_prefix = len(audio_bytes).to_bytes(4, byteorder="big")
-            yield length_prefix
-            yield audio_bytes
 
         logger.info(
             "[voice/speak/stream] DONE: %d/%d chunks synthesized, %d failed",

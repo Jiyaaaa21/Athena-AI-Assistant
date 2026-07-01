@@ -39,6 +39,11 @@ export interface VoiceState {
   athenaReply: string;
   interimTranscript: string;
   waveformData: number[];
+  /** Real-time 0-1 amplitude of Athena's own voice while phase is
+   *  "speaking", sourced from StreamingPlaybackQueue's analyser tap.
+   *  Drives VoiceOrb's audio-reactive glow. Stays 0 if analysis
+   *  couldn't be set up (still-functional playback, just no reactivity). */
+  speakingLevel: number;
   settings: VoiceSettings;
   settingsLoaded: boolean;
   permissionDenied: boolean;
@@ -102,6 +107,7 @@ let _vadActive = false;
 let _playbackQueue: StreamingPlaybackQueue | null = null;
 let _abortSpeakStream: (() => void) | null = null;
 let _incrementalSentSoFar = ""; // tracks what's already been queued for speech
+let _hasSentFirstChunkThisTurn = false; // gates the fast-path fallback to only the opening chunk
 
 // Phase 18 — single-flight TTS dispatch state. Ensures only ONE
 // /voice/speak/stream request is ever in flight at a time, fixing the
@@ -170,7 +176,11 @@ function _cleanupBargeInMonitor() {
  * return them as a single chunk ready to queue for TTS. Returns null if
  * no new complete sentence is available yet (still mid-sentence).
  */
-function _extractNewSpeakableChunk(fullTextSoFar: string, alreadySpoken: string): string | null {
+function _extractNewSpeakableChunk(
+  fullTextSoFar: string,
+  alreadySpoken: string,
+  isFirstChunkOfTurn: boolean,
+): string | null {
   if (!fullTextSoFar.startsWith(alreadySpoken)) {
     // Text was reset/regenerated — treat everything as new
     alreadySpoken = "";
@@ -178,11 +188,59 @@ function _extractNewSpeakableChunk(fullTextSoFar: string, alreadySpoken: string)
   const unspoken = fullTextSoFar.slice(alreadySpoken.length);
   if (!unspoken.trim()) return null;
 
-  // Find the last sentence-ending punctuation in the unspoken portion
-  const match = unspoken.match(/^[\s\S]*?[.!?](?=\s|$)/);
-  if (!match) return null; // no complete sentence yet
+  // Preferred boundary: a complete sentence — sounds the most natural.
+  const sentenceMatch = unspoken.match(/^[\s\S]*?[.!?](?=\s|$)/);
+  if (sentenceMatch) return sentenceMatch[0];
 
-  return match[0];
+  // Phase 24 fix ("voice comes later than text"): waiting for a full
+  // sentence before dispatching the FIRST chunk means a long opening
+  // sentence delays time-to-first-audio by however long the whole thing
+  // takes to generate AND synthesize. Fall back to a natural mid-sentence
+  // pause (a comma) once there's enough text to read as a real clause.
+  //
+  // Restricted to the FIRST chunk of a turn only (follow-up fix): every
+  // chunk sent to /voice/speak/stream pays its own ~300-800ms edge-tts
+  // connection handshake. Applying this fallback to every chunk
+  // throughout a long response meant more, smaller requests piling up
+  // that overhead repeatedly — trading a faster start for a slower,
+  // choppier rest of the response. Only the opening chunk needs this;
+  // once speech has actually started, full-sentence chunking is both
+  // more natural-sounding and cheaper overall.
+  if (isFirstChunkOfTurn) {
+    const wordCount = unspoken.trim().split(/\s+/).length;
+    const commaMatch = unspoken.match(/^[\s\S]*?,\s/);
+    if (commaMatch && wordCount >= 5) return commaMatch[0];
+
+    // Last-resort hard cutoff: no sentence end and no comma yet, but the
+    // model has produced a genuinely long run of text without either.
+    //
+    // BUG FIX: the previous version reconstructed this via
+    // `unspoken.trim().split(/\s+/).slice(0, 12).join(" ")`, which
+    // normalizes whitespace instead of slicing real characters out of
+    // `unspoken`. Any mismatch between the reconstructed string and the
+    // actual source text broke the `fullTextSoFar.startsWith(alreadySpoken)`
+    // check above on the NEXT call — resetting `alreadySpoken` back to "",
+    // which treated everything already spoken as unspoken again and
+    // re-sent it to TTS. That's what caused Athena to repeat the same
+    // sentence out loud. Fixed by finding the real character offset of
+    // the 12th word boundary and slicing `unspoken` directly, so the
+    // returned chunk is always an exact substring — the startsWith
+    // invariant can never drift out of sync.
+    if (wordCount >= 14) {
+      const wordBoundary = /\S+\s*/g;
+      let seen = 0;
+      let cutIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = wordBoundary.exec(unspoken)) !== null) {
+        seen++;
+        cutIndex = wordBoundary.lastIndex;
+        if (seen >= 12) break;
+      }
+      if (cutIndex > 0) return unspoken.slice(0, cutIndex);
+    }
+  }
+
+  return null; // still too little text to speak yet
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -193,6 +251,7 @@ export const useVoice = create<VoiceState>()((set, get) => ({
   athenaReply: "",
   interimTranscript: "",
   waveformData: new Array(32).fill(0),
+  speakingLevel: 0,
   settings: DEFAULT_SETTINGS,
   settingsLoaded: false,
   permissionDenied: false,
@@ -358,6 +417,7 @@ export const useVoice = create<VoiceState>()((set, get) => ({
       _abortSpeakStream = null;
       // Only clear phase if we weren't interrupted out of it already
       if (get().phase === "speaking") set({ phase: "idle", athenaReply: "" });
+      set({ speakingLevel: 0 });
       opts?.onDone?.();
     };
 
@@ -370,6 +430,7 @@ export const useVoice = create<VoiceState>()((set, get) => ({
         console.warn("[voice store] chunk playback error (auto-recovering):", err.message);
       },
       onAllDone: finish,
+      onLevel: (level) => set({ speakingLevel: level }),
     });
     _playbackQueue = queue;
 
@@ -423,19 +484,23 @@ export const useVoice = create<VoiceState>()((set, get) => ({
           _cleanupBargeInMonitor();
           _playbackQueue = null;
           if (get().phase === "speaking") set({ phase: "idle", athenaReply: "" });
+          set({ speakingLevel: 0 });
         },
+        onLevel: (level) => set({ speakingLevel: level }),
       });
       _incrementalSentSoFar = "";
       _ttsRequestInFlight = false;
       _ttsPendingText = "";
+      _hasSentFirstChunkThisTurn = false;
     }
 
     set({ athenaReply: textSoFar });
 
-    const newChunk = _extractNewSpeakableChunk(textSoFar, _incrementalSentSoFar);
+    const newChunk = _extractNewSpeakableChunk(textSoFar, _incrementalSentSoFar, !_hasSentFirstChunkThisTurn);
     if (newChunk) {
       _incrementalSentSoFar += newChunk;
       _ttsPendingText += newChunk;
+      _hasSentFirstChunkThisTurn = true;
       _dispatchNextTtsRequestIfIdle();
     }
   },
@@ -484,7 +549,9 @@ export const useVoice = create<VoiceState>()((set, get) => ({
     _ttsPendingText = "";
     _ttsRequestInFlight = false;
     _ttsAllTextReceived = false;
+    _hasSentFirstChunkThisTurn = false;
     if (get().phase === "speaking") set({ phase: "idle", athenaReply: "" });
+    set({ speakingLevel: 0 });
   },
 
   startContinuous: (onTranscript) => {
@@ -566,7 +633,16 @@ const VAD_SILENCE_THRESHOLD = 8;
 // the single biggest source of "Athena feels slow" — it wasn't generation
 // or TTS, it was just sitting there waiting to confirm you'd really
 // stopped talking before even starting to process anything.
-const VAD_SILENCE_DURATION_MS = 700;
+//
+// Phase 24 fix: 700ms turned out to be too aggressive in practice — it's
+// shorter than a lot of people's natural mid-sentence thinking pauses
+// ("I need to... [400-900ms]... call the plumber"), so the mic was
+// cutting off before the person actually finished talking. 1100ms is
+// still far snappier than the original 2200ms, but gives real speech
+// enough room to breathe. If this still feels like it's cutting people
+// off, raise it further (1500ms) before touching anything else — this
+// single number is the primary lever for "stops listening too early."
+const VAD_SILENCE_DURATION_MS = 1100;
 const VAD_POLL_MS = 100;
 // Phase 19 fix: with auto-start-on-open now firing immediately when the
 // full-screen Voice Mode dialog appears, the user often hasn't begun
@@ -577,7 +653,9 @@ const VAD_POLL_MS = 100;
 // which it correctly rejects with "could not process file: is it a
 // valid media file?" This mirrors the grace period composer.tsx's
 // separate inline-VAD implementation already had.
-const VAD_STARTUP_GRACE_MS = 800;
+// Phase 24: bumped 800ms -> 1000ms alongside the silence-duration change
+// above, same reasoning -- more reaction time before VAD starts counting.
+const VAD_STARTUP_GRACE_MS = 1000;
 
 function _startVAD() {
   let consecutiveSilent = 0;

@@ -321,6 +321,7 @@ function SearchPage() {
           icon={Search}
           title="Start searching"
           description="Type at least 2 characters to search across your entire knowledge base."
+          tone="info"
         />
       ) : isFetching ? (
         <div className="flex items-center gap-3 py-12 justify-center text-muted-foreground">
@@ -332,6 +333,7 @@ function SearchPage() {
           icon={AlertCircle}
           title="Search failed"
           description="Couldn't reach the backend. Make sure Athena is running."
+          tone="danger"
         />
       ) : results.length === 0 ? (
         <EmptyState

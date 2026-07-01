@@ -197,6 +197,25 @@
   color: transparent;
 }
 
+/* Athena's "voice" — a distinctive serif reserved for moments where
+   Athena is speaking directly to you (the greeting, the spoken line),
+   deliberately different from the clean grotesk sans used for UI chrome
+   everywhere else. This contrast is the typographic signature: two
+   voices, used consistently, not one uniform sans-serif everywhere. */
+.athena-voice {
+  font-family: "Fraunces", ui-serif, Georgia, serif;
+  font-optical-sizing: auto;
+}
+
+/* Sidebar wayfinding — a persistent left accent bar so the active page
+   is obvious at a glance, not just a faint background tint. */
+.athena-nav-active {
+  background-color: color-mix(in oklch, var(--primary) 10%, transparent);
+  color: var(--primary);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 0 var(--primary);
+}
+
 /* Phase 15: Inline voice waveform bars in composer */
 @keyframes voice-bar {
   0%, 100% { transform: scaleY(0.3); }

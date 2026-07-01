@@ -19,6 +19,16 @@ type QueueEvents = {
   onChunkStart?: (index: number) => void;
   onAllDone?: () => void;     // fired when the queue is empty AND no more chunks are coming
   onError?: (err: Error) => void;
+  /**
+   * Fired repeatedly (~60fps) with a 0-1 amplitude reading of the audio
+   * actually being played, so the UI (VoiceOrb) can react to Athena's
+   * real voice energy instead of a canned animation loop. Purely
+   * additive — if Web Audio analysis can't be set up for any reason
+   * (unsupported browser, suspended AudioContext, etc.) this simply
+   * never fires and playback proceeds exactly as before via the plain
+   * HTMLAudioElement path.
+   */
+  onLevel?: (level: number) => void;
 };
 
 export class StreamingPlaybackQueue {
@@ -30,6 +40,14 @@ export class StreamingPlaybackQueue {
   private hasStartedOnce = false;
   private events: QueueEvents;
   private chunkIndex = 0;
+
+  // Optional real-time amplitude analysis for onLevel. Set up lazily and
+  // defensively — analysisAttempted gates a single setup attempt so a
+  // failure doesn't retry (and doesn't throw) on every subsequent chunk.
+  private analysisAttempted = false;
+  private audioCtx: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private levelRaf: number | null = null;
 
   constructor(events: QueueEvents = {}) {
     this.events = events;
@@ -68,10 +86,90 @@ export class StreamingPlaybackQueue {
       this.currentAudio = null;
     }
     this.playing = false;
+    this._stopLevelLoop();
+    if (this.audioCtx) {
+      this.audioCtx.close().catch(() => {});
+      this.audioCtx = null;
+      this.analyser = null;
+    }
   }
 
   get isPlaying() {
     return this.playing;
+  }
+
+  /**
+   * One-shot, defensive attempt to stand up a Web Audio analyser tapped
+   * onto this queue's audio output. Only called if the caller actually
+   * wants onLevel readings. Never throws — any failure just leaves
+   * audioCtx/analyser null, and every call site checks for that before
+   * touching the audio graph, falling back to plain, unmodified
+   * HTMLAudioElement playback.
+   */
+  private _trySetupAnalysis() {
+    if (this.analysisAttempted) return;
+    this.analysisAttempted = true;
+    if (!this.events.onLevel) return;
+    try {
+      const AudioContextCtor =
+        window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextCtor) return;
+      this.audioCtx = new AudioContextCtor();
+      this.analyser = this.audioCtx.createAnalyser();
+      this.analyser.fftSize = 256;
+      // Analyser must reach destination or the tapped audio would be
+      // silent — this is the one line that matters most for safety.
+      this.analyser.connect(this.audioCtx.destination);
+    } catch {
+      this.audioCtx = null;
+      this.analyser = null;
+    }
+  }
+
+  /**
+   * Routes one <audio> element's output through the analyser so onLevel
+   * can read real amplitude. Returns true only if the tap is fully live
+   * (context confirmed running) — if false, the caller leaves the audio
+   * element to play directly through its default output, completely
+   * unaffected by any of this.
+   */
+  private _tapForAnalysis(audio: HTMLAudioElement): boolean {
+    if (!this.audioCtx || !this.analyser) return false;
+    try {
+      if (this.audioCtx.state === "suspended") {
+        // Fire-and-forget resume; if it doesn't come back in time for
+        // THIS chunk we simply skip tapping this one chunk and try
+        // again on the next (the audioCtx persists for the queue's
+        // lifetime, so a later chunk can still succeed).
+        this.audioCtx.resume().catch(() => {});
+      }
+      if (this.audioCtx.state !== "running") return false;
+      const source = this.audioCtx.createMediaElementSource(audio);
+      source.connect(this.analyser);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private _startLevelLoop() {
+    if (!this.analyser || !this.events.onLevel) return;
+    const data = new Uint8Array(this.analyser.frequencyBinCount);
+    const tick = () => {
+      if (!this.analyser || !this.playing) { this.levelRaf = null; return; }
+      this.analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) sum += Math.abs(data[i] - 128);
+      const level = Math.min(1, (sum / data.length) / 40);
+      this.events.onLevel?.(level);
+      this.levelRaf = requestAnimationFrame(tick);
+    };
+    tick();
+  }
+
+  private _stopLevelLoop() {
+    if (this.levelRaf !== null) { cancelAnimationFrame(this.levelRaf); this.levelRaf = null; }
+    this.events.onLevel?.(0);
   }
 
   private _playNext() {
@@ -80,6 +178,7 @@ export class StreamingPlaybackQueue {
     const next = this.queue.shift();
     if (!next) {
       this.playing = false;
+      this._stopLevelLoop();
       if (this.noMoreChunksExpected) {
         this.events.onAllDone?.();
       }
@@ -90,6 +189,13 @@ export class StreamingPlaybackQueue {
     const url = URL.createObjectURL(next);
     const audio = new Audio(url);
     this.currentAudio = audio;
+
+    // Best-effort, additive analyser tap. If this fails or the context
+    // isn't confirmed running, `tapped` is false and audio.play() below
+    // proceeds exactly as it always has — untouched direct playback.
+    this._trySetupAnalysis();
+    const tapped = this._tapForAnalysis(audio);
+    if (tapped && this.levelRaf === null) this._startLevelLoop();
 
     if (!this.hasStartedOnce) {
       this.hasStartedOnce = true;

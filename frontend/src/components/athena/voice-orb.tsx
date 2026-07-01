@@ -18,6 +18,11 @@ import type { VoicePhase } from "@/stores/voice";
 interface VoiceOrbProps {
   phase: VoicePhase;
   waveformData: number[];
+  /** Real-time 0-1 amplitude of Athena's own voice during "speaking".
+   *  When present, layers a live audio-reactive glow on top of the
+   *  existing ambient animation below — purely additive, so the orb
+   *  looks exactly as it did before if this is omitted or stays 0. */
+  level?: number;
   transcript?: string;
   athenaReply?: string;
   continuousActive?: boolean;
@@ -51,6 +56,7 @@ const GLOW_COLOR: Record<VoicePhase, string> = {
 export function VoiceOrb({
   phase,
   waveformData,
+  level,
   continuousActive,
   size = "xl",
   onClick,
@@ -91,6 +97,28 @@ export function VoiceOrb({
           }}
           transition={{ duration: 1.8, repeat: isAnimating ? Infinity : 0, ease: "easeOut" }}
         />
+
+        {/* Live audio-reactive glow — additive layer, only present while
+            speaking and only if a real amplitude reading is available.
+            Reacts directly to Athena's actual voice energy instead of
+            the fixed ambient loop above, which is what makes the orb
+            feel like it's genuinely listening to itself talk rather
+            than just running a canned animation. */}
+        {phase === "speaking" && typeof level === "number" && (
+          <div
+            aria-hidden
+            className="absolute rounded-full pointer-events-none"
+            style={{
+              width: innerDimension,
+              height: innerDimension,
+              background: GLOW_COLOR.speaking,
+              filter: "blur(20px)",
+              transform: `scale(${1 + Math.min(1, level) * 0.55})`,
+              opacity: 0.2 + Math.min(1, level) * 0.55,
+              transition: "transform 90ms ease-out, opacity 90ms ease-out",
+            }}
+          />
+        )}
 
         {/* Core orb */}
         <motion.div

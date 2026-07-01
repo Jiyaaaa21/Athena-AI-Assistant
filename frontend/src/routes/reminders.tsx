@@ -269,6 +269,7 @@ function RemindersPage() {
           icon={Bell}
           title="Nothing scheduled"
           description="Create a reminder to get started."
+          tone="warning"
         />
       ) : (
         <>

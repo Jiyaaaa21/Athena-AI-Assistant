@@ -130,6 +130,7 @@ function NotesPage() {
       body: "",
       pinned: false,
       createdAt: "",
+      updatedAt: "",
       category: null,
       tags: [],
     });
@@ -243,6 +244,7 @@ function NotesPage() {
                           pinned: editing.pinned,
                           category: editing.category || null,
                           tags,
+                          updatedAt: null,
                         });
                       }
                       setOpen(false);
@@ -259,32 +261,34 @@ function NotesPage() {
         }
       />
 
-      <div className="flex flex-wrap items-center gap-3 mb-6">
-        <div className="relative max-w-sm flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search notes…"
-            className="pl-9"
-          />
+      {!isLoading && (data?.length ?? 0) > 0 && (
+        <div className="flex flex-wrap items-center gap-3 mb-6">
+          <div className="relative max-w-sm flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search notes…"
+              className="pl-9"
+            />
+          </div>
+          {categories.length > 0 && (
+            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="All categories" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_CATEGORIES}>All categories</SelectItem>
+                {categories.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
-        {categories.length > 0 && (
-          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="All categories" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_CATEGORIES}>All categories</SelectItem>
-              {categories.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {c}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </div>
+      )}
 
       {isLoading ? (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -297,6 +301,7 @@ function NotesPage() {
           icon={StickyNote}
           title="No notes yet"
           description="Create your first note."
+          tone="accent"
         />
       ) : (
         <div
@@ -363,7 +368,7 @@ function NotesPage() {
               )}
 
               <div className="flex items-center justify-between mt-4 text-[10px] text-muted-foreground">
-                <span>{new Date(n.createdAt).toLocaleDateString()}</span>
+                <span>{n.createdAt ? new Date(n.createdAt).toLocaleDateString() : "—"}</span>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();

@@ -37,21 +37,14 @@ export type NoteItem = {
   id: string;
   title: string;
   body: string;
-  category: string;
+  category: string | null;
   tags: string[];
   pinned: boolean;
   createdAt: string | null;
   updatedAt: string | null;
 };
 
-export type ReminderItem = {
-  id: string;
-  title: string;
-  dueAt: string | null;
-  done: boolean;
-  priority: "low" | "medium" | "high";
-  createdAt: string | null;
-};
+export type ReminderPriority = "low" | "med" | "high" | null;
 
 // ── Mock helpers ──────────────────────────────────────────────────────────────
 
@@ -99,10 +92,10 @@ export function notes(): NoteItem[] {
   ];
 }
 
-export function reminders(): ReminderItem[] {
+export function reminders(): Reminder[] {
   return [
-    { id: "1", title: "Review Q3 Report", dueAt: "2024-10-15T09:00:00Z", done: false, priority: "high", createdAt: "2024-10-01T08:00:00Z" },
-    { id: "2", title: "Team standup", dueAt: "2024-10-10T10:00:00Z", done: true, priority: "medium", createdAt: "2024-09-30T12:00:00Z" },
+    { id: "1", title: "Review Q3 Report", dueAt: "2024-10-15T09:00:00Z", done: false, priority: "high", category: "Work" },
+    { id: "2", title: "Team standup", dueAt: "2024-10-10T10:00:00Z", done: true, priority: "med", category: "Work" },
   ];
 }
 
@@ -119,7 +112,7 @@ export type Reminder = {
   title: string;
   dueAt: string;
   done: boolean;
-  priority: "low" | "med" | "high" | null;
+  priority: ReminderPriority;
   category: string | null;
   overdue?: boolean;
 };
@@ -135,15 +128,21 @@ export type NewsItem = {
   imageUrl?: string | null;
 };
 
+export type WeatherForecastDay = {
+  day: string;
+  hi: number | null;
+  lo: number | null;
+  condition: string;
+};
+
 export type Weather = {
   city: string;
-  temperature: number;
-  feels_like: number;
+  temperatureC: number;
+  feelsLikeC: number;
   humidity: number;
-  description: string;
+  condition: string;
   icon: string;
-  wind_speed: number;
-  country: string;
+  forecast: WeatherForecastDay[];
 };
 
 export type Memory = {
@@ -203,13 +202,18 @@ export function news(category?: string): NewsItem[] {
 export function weather(city: string): Weather {
   return {
     city: city || "Delhi",
-    temperature: 28,
-    feels_like: 31,
+    temperatureC: 28,
+    feelsLikeC: 31,
     humidity: 65,
-    description: "Partly cloudy",
-    icon: "02d",
-    wind_speed: 12,
-    country: "IN",
+    condition: "Partly cloudy",
+    icon: "partly-cloudy",
+    forecast: [
+      { day: "Mon", hi: 29, lo: 22, condition: "Partly cloudy" },
+      { day: "Tue", hi: 31, lo: 23, condition: "Clear" },
+      { day: "Wed", hi: 27, lo: 21, condition: "Light rain" },
+      { day: "Thu", hi: 28, lo: 22, condition: "Cloudy" },
+      { day: "Fri", hi: 30, lo: 23, condition: "Clear" },
+    ],
   };
 }
 

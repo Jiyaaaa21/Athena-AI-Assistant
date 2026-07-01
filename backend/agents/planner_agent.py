@@ -28,15 +28,22 @@ from backend.tools.reminders import ReminderTool
 _reminder_tool = ReminderTool()
 
 _PLAN_KEYWORDS = {
-    "plan", "planning", "schedule", "roadmap", "steps", "how to",
-    "guide", "strategy", "project", "milestone", "timeline",
-    "organise", "organize", "workflow", "checklist", "todo",
-    "prepare", "create a plan", "help me", "set up",
+    "plan", "planning", "schedule", "roadmap", "guide", "strategy",
+    "project", "milestone", "timeline", "organise", "organize",
+    "workflow", "checklist", "todo", "create a plan", "make a plan",
     "start with", "begin with", "phase", "let's start", "lets start",
-    "basics", "fundamentals", "beginner", "introduction to",
-    "explain", "teach", "learn", "tell me about", "what is",
-    "how does", "walk me through", "show me",
+    "basics", "fundamentals", "introduction to", "walk me through",
 }
+# Phase 24 fix ("every answer comes back long"): this used to also
+# include "help me", "explain", "what is", "how does", "tell me about",
+# "teach me", "show me", and "how to" -- all far too generic. "help me"
+# alone matches an enormous fraction of ordinary requests ("help me
+# troubleshoot this", "help me understand X"), and every one of them got
+# routed through this agent's rigid 5-section plan template or the
+# teach-mode template with its own forced structure, instead of just
+# being answered directly. Left only phrases that specifically signal
+# someone wants an actual roadmap/schedule or to start a defined
+# multi-step learning path -- not just any question with a common verb.
 
 
 class PlannerAgent(BaseAgent):
@@ -111,13 +118,15 @@ class PlannerAgent(BaseAgent):
             f"continues a prior topic, plan specifically about THAT topic — "
             f"do NOT generate a generic plan.\n\n"
             f"User request: {query}\n\n"
-            f"Create a detailed, actionable plan with:\n"
-            f"1. **Overview** — what this plan achieves\n"
-            f"2. **Phases** — 2-4 logical groupings\n"
-            f"3. **Step-by-step tasks** — concrete actions with durations\n"
-            f"4. **Key milestones** — measurable checkpoints\n"
-            f"5. **Success criteria** — how to know when done\n\n"
-            f"Be specific. Reference the exact subject matter from prior context."
+            f"Give them a plan that matches the actual scope of what they asked "
+            f"for. A small, single-session task (\"plan my grocery run\", \"help me "
+            f"schedule tomorrow morning\") needs a short, direct list of steps — "
+            f"not overview/phases/milestones/success-criteria sections, that would "
+            f"be absurd overkill for something this size. Reserve the fuller "
+            f"structure (overview, phases, milestones, success criteria) for "
+            f"requests that are genuinely large or multi-week, where that "
+            f"structure actually helps. Be specific either way — reference the "
+            f"exact subject matter from prior context rather than generic advice."
         )
 
     def _teach_prompt(self, query: str) -> str:
@@ -128,12 +137,13 @@ class PlannerAgent(BaseAgent):
             f"conversation. DO NOT generate a new plan structure — instead, "
             f"DELIVER THE ACTUAL CONTENT for what they're asking about.\n\n"
             f"User request: {query}\n\n"
-            f"Respond by:\n"
-            f"1. Identifying the specific topic/phase from the conversation above\n"
-            f"2. Delivering the actual learning content (explanations, concepts, "
-            f"examples, exercises) for that topic\n"
-            f"3. Ending with: 'Ready for the next concept?' or a practical exercise\n\n"
-            f"Be a teacher, not a planner. Give knowledge, not a schedule."
+            f"Identify the specific topic/phase from the conversation above and "
+            f"deliver the actual content — explanations, concepts, examples — at "
+            f"whatever length the topic genuinely needs. A quick clarifying "
+            f"question deserves a few sentences; a real concept deserves proper "
+            f"explanation. Only end with something like 'Ready for the next "
+            f"concept?' if this is clearly part of an ongoing structured lesson "
+            f"sequence — for a one-off question, just answer it and stop."
         )
 
     def _continue_prompt(self, query: str) -> str:

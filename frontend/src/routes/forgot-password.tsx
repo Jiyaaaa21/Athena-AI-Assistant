@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Loader2, ArrowLeft } from "lucide-react";
+import { AthenaWordmark } from "@/components/athena/logo";
 
 export const Route = createFileRoute("/forgot-password")({
   component: ForgotPasswordPage,
@@ -39,9 +40,7 @@ function ForgotPasswordPage() {
 
       <div className="w-full max-w-sm relative z-10">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-semibold tracking-tight">
-            <span className="athena-gradient-text">Athena</span>
-          </h1>
+          <AthenaWordmark className="justify-center" size="lg" />
         </div>
 
         <div className="rounded-2xl border border-border bg-card p-8 shadow-sm">

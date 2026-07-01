@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/stores/auth";
 import { toast } from "sonner";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { AthenaWordmark } from "@/components/athena/logo";
 
 export const Route = createFileRoute("/login")({
   component: LoginPage,
@@ -46,9 +47,7 @@ function LoginPage() {
       <div className="w-full max-w-sm relative z-10">
         {/* Logo / brand */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-semibold tracking-tight">
-            <span className="athena-gradient-text">Athena</span>
-          </h1>
+          <AthenaWordmark className="justify-center" size="lg" />
           <p className="text-sm text-muted-foreground mt-1">
             AI Operating System
           </p>

@@ -64,7 +64,7 @@ function NewsPage() {
             <a key={n.id} href={n.url} className="block rounded-xl border border-border bg-card p-5 ring-1 ring-black/5 hover:shadow-md transition-shadow group">
               <div className="flex items-center justify-between text-[10px] uppercase tracking-widest text-muted-foreground mb-2">
                 <span>{n.source}</span>
-                <span>{formatDistanceToNow(new Date(n.publishedAt), { addSuffix: true })}</span>
+                <span>{n.publishedAt ? formatDistanceToNow(new Date(n.publishedAt), { addSuffix: true }) : "Recently"}</span>
               </div>
               <h3 className="text-base font-semibold tracking-tight group-hover:text-primary transition-colors">{n.title}</h3>
               <p className="text-sm text-muted-foreground mt-2 line-clamp-2">{n.summary}</p>
