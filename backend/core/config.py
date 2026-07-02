@@ -12,6 +12,14 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GNEWS_API_KEY = os.getenv(
     "GNEWS_API_KEY"
 )
+# Phase 27 addition: general-purpose web search, used by WebSearchTool for
+# anything that isn't specifically news headlines or weather (previously
+# there was no way for Athena to search the open web at all -- news and
+# weather were the only two "live" data sources). Tavily is built
+# specifically for feeding LLM agents clean, ready-to-use search results
+# (vs. raw SERP HTML), and its free tier is genuinely free: 1,000 searches/
+# month, no credit card required. Get a key at https://tavily.com.
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
  
 # Phase 2 addition: the frontend now calls this API cross-origin (the Vite
 # dev server and the FastAPI server run on different ports/hosts), and

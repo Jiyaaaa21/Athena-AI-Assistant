@@ -25,9 +25,11 @@ from backend.core.llm import ask_llm_raw, ask_llm_raw_stream
 from backend.core.logger import agent_logger
 from backend.tools.news import NewsTool
 from backend.tools.weather import WeatherTool
+from backend.tools.web_search_tool import WebSearchTool
 
 _news_tool = NewsTool()
 _weather_tool = WeatherTool()
+_web_tool = WebSearchTool()
 
 _WEB_KEYWORDS = {
     "news", "latest", "current", "today", "happening", "recent",
@@ -38,6 +40,20 @@ _WEB_KEYWORDS = {
 
 _WEATHER_KEYWORDS = ("weather", "temperature", "humidity", "forecast", "rain",
                      "hot", "cold", "sunny", "cloudy", "wind", "climate today")
+
+# Phase 27 addition: previously this agent treated every non-weather query
+# as a news search (NewsTool wraps GNews headlines specifically), so a
+# question like "what's the current exchange rate for USD to INR" or "who
+# won the match yesterday" got routed through a headlines API that had no
+# chance of answering it, and the LLM either hallucinated or gave up.
+# This narrower keyword set identifies queries that are actually asking
+# for news/headlines specifically; anything else that reached this agent
+# (i.e. matched _WEB_KEYWORDS but isn't weather or news-shaped) now goes
+# through general web search (WebSearchTool) instead.
+_NEWS_KEYWORDS = (
+    "news", "headlines", "breaking", "trending", "announcement",
+    "what's new", "latest on", "recent news",
+)
 
 
 class WebSearchAgent(BaseAgent):
@@ -129,6 +145,13 @@ class WebSearchAgent(BaseAgent):
             f"- Keep it concise — 3-5 sentences."
         )
 
+    def _is_news_query(self, query: str) -> bool:
+        """Narrower than can_handle()'s _WEB_KEYWORDS match -- distinguishes
+        an actual news/headlines request from a general factual query that
+        merely matched a broad trigger word like 'current' or 'latest'."""
+        q = query.lower()
+        return any(kw in q for kw in _NEWS_KEYWORDS)
+
     def _news_synthesis_prompt(self, query: str, raw_data: str) -> str:
         history = self.get_conversation_context(turns=4)
         return (
@@ -141,6 +164,26 @@ class WebSearchAgent(BaseAgent):
             f"2. Highlights the most important/relevant stories\n"
             f"3. Adds helpful context or analysis\n"
             f"4. If this is a follow-up to a prior topic, acknowledge the continuity."
+        )
+
+    def _web_search_synthesis_prompt(self, query: str, raw_data: str) -> str:
+        history = self.get_conversation_context(turns=4)
+        return (
+            f"You are Athena. You have LIVE web search results fetched right now "
+            f"for this query.\n\n"
+            f"{history}"
+            f"User asked: {query}\n\n"
+            f"=== LIVE WEB SEARCH RESULTS (fetched this moment) ===\n"
+            f"{raw_data}\n"
+            f"=== END WEB SEARCH RESULTS ===\n\n"
+            f"CRITICAL INSTRUCTIONS:\n"
+            f"- The results above are real and current. Do NOT say you lack "
+            f"real-time web access — you just searched the web, it's right there.\n"
+            f"- Answer the user's question directly using the results.\n"
+            f"- If the results don't actually answer the question, say so honestly "
+            f"rather than guessing — don't fabricate an answer the results don't support.\n"
+            f"- Cite which result a specific claim came from when it matters "
+            f"(e.g. 'according to [source]')."
         )
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -176,15 +219,35 @@ class WebSearchAgent(BaseAgent):
                 metadata={"query_type": "weather", "city": city},
             )
 
-        # News path
-        steps.append("Extracting search topic…")
-        topic = self._extract_topic(query)
-        steps.append(f"Searching news: '{topic}'…")
-        raw = _news_tool.run(topic)
-        if not raw.strip() or "error" in raw.lower():
-            raw = _news_tool.run(query[:60])
+        if self._is_news_query(query):
+            steps.append("Extracting search topic…")
+            topic = self._extract_topic(query)
+            steps.append(f"Searching news: '{topic}'…")
+            raw = _news_tool.run(topic)
+            if not raw.strip() or "error" in raw.lower():
+                raw = _news_tool.run(query[:60])
+            steps.append("Synthesising results…")
+            prompt = self._news_synthesis_prompt(query, raw)
+            answer = ask_llm_raw(prompt)
+
+            return AgentResult(
+                answer=answer,
+                agent_name=self.name,
+                sources=[],
+                steps=steps,
+                confidence=78,
+                metadata={"query_type": "news"},
+            )
+
+        # Phase 27 addition: general web search — everything that reached
+        # this agent but isn't weather or a genuine news/headlines request.
+        # Previously this fell through to the news path above, running a
+        # GNews headline search for questions that had nothing to do with
+        # headlines (e.g. "what's the current price of X").
+        steps.append("Searching the web…")
+        raw = _web_tool.run(query)
         steps.append("Synthesising results…")
-        prompt = self._news_synthesis_prompt(query, raw)
+        prompt = self._web_search_synthesis_prompt(query, raw)
         answer = ask_llm_raw(prompt)
 
         return AgentResult(
@@ -192,8 +255,8 @@ class WebSearchAgent(BaseAgent):
             agent_name=self.name,
             sources=[],
             steps=steps,
-            confidence=78,
-            metadata={"query_type": "news"},
+            confidence=80,
+            metadata={"query_type": "web_search"},
         )
 
     def run_stream(
@@ -210,9 +273,15 @@ class WebSearchAgent(BaseAgent):
             else:
                 prompt = self._weather_synthesis_prompt(query, city, raw)
         else:
-            topic = self._extract_topic(query)
-            raw = _news_tool.run(topic)
-            prompt = self._news_synthesis_prompt(query, raw)
+            if self._is_news_query(query):
+                topic = self._extract_topic(query)
+                raw = _news_tool.run(topic)
+                prompt = self._news_synthesis_prompt(query, raw)
+            else:
+                # Phase 27 addition: see run() for why general queries no
+                # longer fall through to a news-headlines search.
+                raw = _web_tool.run(query)
+                prompt = self._web_search_synthesis_prompt(query, raw)
 
         for chunk in ask_llm_raw_stream(prompt):
             yield chunk

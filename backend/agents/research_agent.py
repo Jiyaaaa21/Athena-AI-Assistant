@@ -3,7 +3,7 @@ agents/research_agent.py  —  Phase 13
 
 Research Agent: performs multi-step research on a topic by:
 1. Decomposing the query into sub-questions
-2. Pulling relevant context from RAG (documents) + news
+2. Pulling relevant context from RAG (documents) + live web search + news
 3. Synthesising a structured research brief
 
 Streams natively via Groq streaming.
@@ -18,10 +18,12 @@ from backend.agents.base import BaseAgent, AgentResult
 from backend.core.llm import ask_llm_raw, ask_llm_raw_stream
 from backend.core.logger import agent_logger
 from backend.tools.news import NewsTool
+from backend.tools.web_search_tool import WebSearchTool
 from backend.rag.rag_pipeline import rag_answer
 from backend.core.request_context import get_current_user_id
 
 _news_tool = NewsTool()
+_web_tool = WebSearchTool()
 
 # Phase 24 fix ("every answer comes back long"): this used to also include
 # "what is", "how does", "explain", and "tell me about" -- all extremely
@@ -52,7 +54,8 @@ class ResearchAgent(BaseAgent):
         return (
             "Deep research agent. Use for in-depth analysis, explanations, "
             "comparisons, topic overviews, or any query requiring synthesis "
-            "from multiple sources. Combines document knowledge with live news."
+            "from multiple sources. Combines document knowledge with live "
+            "web search and news."
         )
 
     def can_handle(self, query: str) -> bool:
@@ -88,7 +91,7 @@ class ResearchAgent(BaseAgent):
         return questions[:4] if questions else [query]
 
     def _gather_sources(self, sub_questions: list[str], query: str) -> tuple[str, list[dict]]:
-        """Gather context from RAG documents and news headlines."""
+        """Gather context from RAG documents, live web search, and news."""
         sources = []
         context_parts = []
 
@@ -98,6 +101,19 @@ class ResearchAgent(BaseAgent):
             if rag_result.get("answer"):
                 context_parts.append(f"[From your documents]\n{rag_result['answer']}")
                 sources.extend(rag_result.get("sources", []))
+        except Exception:
+            pass
+
+        # Phase 27 addition: general web search. Previously this method's
+        # only source of live/external information (beyond the user's own
+        # documents) was NewsTool -- a GNews headlines search -- which
+        # meant a research query like "compare X and Y" or "how does Z
+        # work" had no real web context to draw on at all, only whatever
+        # happened to be in recent news coverage (usually nothing).
+        try:
+            web_text = _web_tool.run(query)
+            if web_text and "error" not in web_text.lower() and "no web search results" not in web_text.lower():
+                context_parts.append(f"[From web search]\n{web_text}")
         except Exception:
             pass
 

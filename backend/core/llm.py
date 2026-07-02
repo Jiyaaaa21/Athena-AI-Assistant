@@ -1,3 +1,16 @@
+"""
+backend/core/llm.py  —  Phase 14: Athena Personality + Context-Aware LLM
+
+Phase 15 fixes:
+- ask_llm_with_memory() NO LONGER double-writes messages. api/chat.py is the
+  single source of truth for persisting conversation turns. Previously both
+  this function AND chat.py called add_message(), creating duplicate history
+  entries that eventually caused context corruption.
+- Context builder is cached per-request (one DB round-trip per message, not
+  one per LLM call).
+- All existing function signatures preserved for backward compatibility.
+"""
+
 from groq import Groq
 from backend.core.config import GROQ_API_KEY, GEMINI_API_KEY
 from backend.core.memory_service import get_history
@@ -61,7 +74,8 @@ def _gemini_complete(messages: list[dict]) -> str:
     if not GEMINI_API_KEY:
         raise RuntimeError("Groq failed and GEMINI_API_KEY is not configured — no fallback available.")
     resp = requests.post(
-        f"{_GEMINI_BASE}:generateContent?key={GEMINI_API_KEY}",
+        f"{_GEMINI_BASE}:generateContent",
+        headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
         json=_gemini_payload(messages),
         timeout=60,
     )
@@ -79,7 +93,8 @@ def _gemini_complete_stream(messages: list[dict]):
         )
         return
     with requests.post(
-        f"{_GEMINI_BASE}:streamGenerateContent?alt=sse&key={GEMINI_API_KEY}",
+        f"{_GEMINI_BASE}:streamGenerateContent?alt=sse",
+        headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
         json=_gemini_payload(messages),
         timeout=120,
         stream=True,
@@ -122,13 +137,27 @@ def _groq_complete_stream(messages: list[dict]):
             yield delta
 
 
+_BOTH_PROVIDERS_FAILED_MESSAGE = (
+    "I'm having trouble reaching the AI service right now -- both the "
+    "primary and fallback providers are unavailable. Please try again "
+    "in a moment."
+)
+
+
 def _complete(messages: list[dict]) -> str:
-    """Try Groq; on any failure, fall back to Gemini."""
+    """Try Groq; on any failure, fall back to Gemini. If Gemini also
+    fails, never let that raw exception (potentially containing request
+    details we don't want surfaced to the user) become the visible
+    answer -- log it and return a clean, generic message instead."""
     try:
         return _groq_complete(messages)
     except Exception as e:
         error_logger.warning(f"[llm] Groq call failed ({e}); falling back to Gemini.")
-        return _gemini_complete(messages)
+        try:
+            return _gemini_complete(messages)
+        except Exception as e2:
+            error_logger.error(f"[llm] Gemini fallback also failed ({e2}).")
+            return _BOTH_PROVIDERS_FAILED_MESSAGE
 
 
 def _complete_stream(messages: list[dict]):
@@ -141,6 +170,13 @@ def _complete_stream(messages: list[dict]):
     failed mid-stream, restarting on Gemini would produce a garbled
     two-provider answer, so that (rarer) case just stops rather than
     switching providers mid-response.
+
+    If Gemini's fallback attempt *also* fails, that exception is caught
+    here too rather than left to propagate -- letting it bubble up would
+    have it displayed to the user as raw exception text by chat.py's SSE
+    error handler (str(exc)), which is exactly how a Gemini request URL
+    ended up visible in a chat response before the x-goog-api-key header
+    fix above. Log the real error, show a clean one.
     """
     yielded_any = False
     try:
@@ -152,7 +188,15 @@ def _complete_stream(messages: list[dict]):
             error_logger.error(f"[llm] Groq stream failed mid-response ({e}); not restarting on Gemini.")
             return
         error_logger.warning(f"[llm] Groq stream call failed ({e}); falling back to Gemini.")
-        yield from _gemini_complete_stream(messages)
+        gemini_yielded_any = False
+        try:
+            for chunk in _gemini_complete_stream(messages):
+                gemini_yielded_any = True
+                yield chunk
+        except Exception as e2:
+            error_logger.error(f"[llm] Gemini fallback stream also failed ({e2}).")
+            if not gemini_yielded_any:
+                yield _BOTH_PROVIDERS_FAILED_MESSAGE
 
 # Phase 24 tuning: every call below used to hardcode temperature=0.7 with no
 # other sampling controls at all. Two concrete, mechanical additions on top
