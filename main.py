@@ -5,7 +5,7 @@ from backend.api.chat import router as chat_router
 from backend.api.memory import router as memory_router
 from backend.api.admin import router as admin_router
 from backend.api.upload import router as upload_router
-from backend.api.documents import router as documents_router
+from backend.api.documents import router as documents_router, public_router as documents_public_router
 from backend.api.notes import router as notes_router
 from backend.api.reminders import router as reminders_router
 from backend.api.news import router as news_router
@@ -152,6 +152,11 @@ app.include_router(memory_router, dependencies=_auth_required)
 app.include_router(admin_router, dependencies=_auth_required)
 app.include_router(upload_router, dependencies=_auth_required)
 app.include_router(documents_router, dependencies=_auth_required)
+# Phase 25 fix: public token-authenticated file serving for the document
+# preview iframe — an <iframe src="..."> can't send an Authorization
+# header, so this route deliberately carries no JWT dependency; the
+# short-lived token in the URL is the auth (see api/documents.py).
+app.include_router(documents_public_router)
 app.include_router(notes_router, dependencies=_auth_required)
 app.include_router(reminders_router, dependencies=_auth_required)
 app.include_router(news_router, dependencies=_auth_required)

@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   FileText, Upload, Trash2, Search, Loader2, CheckCircle2,
   Eye, Layers, ChevronDown, ChevronUp, Info, X,
@@ -79,9 +79,21 @@ function DocumentDetailDialog({
     staleTime: 30_000,
   });
 
-  if (!doc) return null;
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  const previewUrl = isLive ? `${API_BASE_URL}/documents/${doc.id}/file` : null;
+  useEffect(() => {
+    setPreviewUrl(null);
+    if (!doc || !isLive) return;
+    let cancelled = false;
+    documentsApi.fileToken(doc.id).then(({ token }) => {
+      if (!cancelled) setPreviewUrl(`${API_BASE_URL}/documents/file/${token}`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [doc?.id]);
+
+  if (!doc) return null;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>

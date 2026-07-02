@@ -5,6 +5,10 @@ import secrets
 load_dotenv()
  
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# Phase 26 addition: free fallback LLM provider, used only when Groq fails
+# (rate limit / token quota exhausted / outage) — see core/llm.py. Get a
+# free key with no credit card at https://aistudio.google.com/apikey.
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GNEWS_API_KEY = os.getenv(
     "GNEWS_API_KEY"
 )

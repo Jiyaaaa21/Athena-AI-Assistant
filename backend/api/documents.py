@@ -10,7 +10,8 @@ from backend.rag.vector_store import delete_by_source
 from backend.api.upload import _serialize as serialize
 from backend.core.request_context import get_current_user_id
 
-router = APIRouter()
+router = APIRouter()          # protected (JWT required — mounted with dependencies=_auth_required)
+public_router = APIRouter()   # public — token IS the auth, no JWT possible from a plain iframe src
 
 # ── Document download tokens (solves iframe auth) ─────────────────────────────
 _DOC_TOKENS: dict[str, dict] = {}
@@ -46,9 +47,20 @@ def create_document_file_token(document_id: str):
     return {"token": token}
 
 
-@router.get("/documents/file/{token}")
+@public_router.get("/documents/file/{token}")
 def get_document_file_by_token(token: str):
-    """Token-authenticated file serving — used by browser iframes."""
+    """
+    Token-authenticated file serving — used by browser iframes.
+
+    This is mounted on public_router (no JWT dependency) deliberately: an
+    <iframe src="..."> is a plain browser navigation, not a fetch() call,
+    so it cannot attach an Authorization header. Previously this endpoint
+    was on the protected router (dependencies=_auth_required in main.py
+    applies to every route in that router), which meant it needed a JWT
+    it could never actually receive -- every preview request failed with
+    "Not authenticated" regardless of the short-lived token in the URL.
+    The random, single-use-window token in the URL path IS the auth here.
+    """
     _purge_doc_tokens()
     entry = _DOC_TOKENS.get(token)
     if not entry or entry["expires"] < time.time():

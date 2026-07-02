@@ -344,6 +344,16 @@ export const documentsApi = {
     if (isLive) return request<{ ok: true }>(`/documents/${id}`, { method: "DELETE" });
     return delay({ ok: true as const });
   },
+  // Phase 25 fix: an <iframe src="..."> is a plain browser navigation and
+  // can't send an Authorization header, so the preview iframe can't load
+  // /documents/{id}/file directly (that route requires a JWT). This mints
+  // a short-lived, single-purpose token via an authenticated POST, which
+  // the iframe can then use against the public /documents/file/{token}
+  // route instead — the token itself is the auth for that request.
+  fileToken: async (id: string) => {
+    if (isLive) return request<{ token: string }>(`/documents/${id}/file-token`, { method: "POST" });
+    return delay({ token: "mock" });
+  },
 };
 
 /* ---------- Notes ---------- */

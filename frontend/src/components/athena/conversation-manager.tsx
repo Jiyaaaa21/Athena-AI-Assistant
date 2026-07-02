@@ -390,7 +390,7 @@ export function ConversationManager({ collapsed }: { collapsed: boolean }) {
   const handleExport = (id: number) => { conversationsApi.exportPdf(id); };
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col shrink-0">
       {/* ── Section header ── */}
       <div className="flex items-center justify-between px-3 pt-3 pb-1 shrink-0">
         <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70 font-semibold select-none">
@@ -438,8 +438,10 @@ export function ConversationManager({ collapsed }: { collapsed: boolean }) {
         </div>
       )}
 
-      {/* ── Scrollable conversation list ── */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-3 space-y-0.5">
+      {/* ── Conversation list — scrolls together with everything else in
+          app-sidebar's unified scroll region, not as its own separate
+          scroll container. ── */}
+      <div className="px-2 pb-3 space-y-0.5">
         {loading && (
           <div className="text-[11px] text-muted-foreground px-3 py-4 text-center">Loading…</div>
         )}

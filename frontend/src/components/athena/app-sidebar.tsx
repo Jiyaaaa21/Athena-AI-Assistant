@@ -1,3 +1,10 @@
+/**
+ * AppSidebar — Sidebar with collapsible nav sections + ChatGPT-style conversation list.
+ * Changes (Issue #1):
+ *  - Knowledge and Live nav sections are now collapsible (toggle open/closed).
+ *  - ConversationManager is given flex-1 so it fills available vertical space.
+ *  - Agent Panel moved into collapsible section to save space.
+ */
 import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
 import { ConversationManager } from "./conversation-manager";
 import { AgentPanel } from "./agent-panel";
@@ -93,6 +100,17 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
           {collapsed ? <PanelLeft className="size-4" /> : <PanelLeftClose className="size-4" />}
         </button>
       </div>
+
+      {/* ── Everything below the header down to the footer scrolls as one
+          region. Previously only the conversation list (inside
+          ConversationManager) had overflow-y-auto — the nav items and
+          Knowledge/Live/Agent Ecosystem sections above it had no scroll
+          container of their own. With enough conversations, or a couple
+          of those sections expanded, on a shorter viewport the combined
+          content was taller than the sidebar and had nowhere to go:
+          it just got clipped, pushing Settings/the user card off the
+          bottom with no way to reach them. ── */}
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
 
       {/* ── New Chat + Search ── */}
       <div className="px-3 mt-1 space-y-2 shrink-0">
@@ -306,10 +324,11 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
         </div>
       )}
 
-      {/* ── Conversation list — takes remaining space ── */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <ConversationManager collapsed={collapsed} />
+      {/* ── Conversation list ── */}
+      <ConversationManager collapsed={collapsed} />
+
       </div>
+      {/* ── end unified scroll region ── */}
 
       {/* ── Footer: Settings + User ── */}
       <div className="px-3 pb-4 pt-2 border-t border-border/60 shrink-0">
