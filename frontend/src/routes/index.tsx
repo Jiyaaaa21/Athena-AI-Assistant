@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -494,6 +494,7 @@ function ChatHome() {
     statusText,
   } = useChat();
 
+  const navigate = useNavigate();
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [hasInsight, setHasInsight] = useState(false);
 
@@ -622,7 +623,7 @@ function ChatHome() {
                   <QuickChip
                     icon={Upload}
                     label="Upload doc"
-                    onClick={() => (window.location.href = "/documents")}
+                    onClick={() => navigate({ to: "/documents" })}
                   />
                   <QuickChip
                     icon={Mic}
@@ -632,12 +633,12 @@ function ChatHome() {
                   <QuickChip
                     icon={Newspaper}
                     label="Check news"
-                    onClick={() => (window.location.href = "/news")}
+                    onClick={() => navigate({ to: "/news" })}
                   />
                   <QuickChip
                     icon={StickyNote}
                     label="Open notes"
-                    onClick={() => (window.location.href = "/notes")}
+                    onClick={() => navigate({ to: "/notes" })}
                   />
                 </div>
               </motion.div>
@@ -677,7 +678,7 @@ function ChatHome() {
       </div>
 
       {/* Floating composer */}
-      <div className="absolute bottom-0 left-0 right-0 px-4 pb-6 pt-10 bg-gradient-to-t from-background via-background/95 to-transparent pointer-events-none">
+      <div className="absolute bottom-0 left-0 right-0 z-20 px-4 pb-6 pt-10 bg-gradient-to-t from-background via-background/95 to-transparent pointer-events-none">
         <div className="pointer-events-auto">
           <Composer
             onSend={sendStream}

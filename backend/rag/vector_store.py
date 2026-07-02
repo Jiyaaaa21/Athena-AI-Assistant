@@ -8,7 +8,20 @@ client = chromadb.PersistentClient(
 )
 
 collection = client.get_or_create_collection(
-    name="athena_docs"
+    name="athena_docs",
+    # Phase 15 fix: rag_pipeline._cosine_to_confidence() assumes distances
+    # come back in the cosine range [0, 2] ("0 = identical, 2 = opposite").
+    # Without this, get_or_create_collection() falls back to ChromaDB's
+    # default distance metric, which is squared L2 -- not cosine. With
+    # unnormalized MiniLM embeddings, L2 distances routinely land well
+    # above 2 even for a strong semantic match, which the confidence
+    # formula then maps to a large NEGATIVE score. Every single retrieval
+    # -- including a perfect match against a document uploaded seconds
+    # earlier -- was failing the _MIN_CONFIDENCE=20 threshold and getting
+    # discarded before the LLM ever saw it, producing "I couldn't find
+    # that in your uploaded documents" regardless of what was actually
+    # indexed.
+    metadata={"hnsw:space": "cosine"},
 )
 
 

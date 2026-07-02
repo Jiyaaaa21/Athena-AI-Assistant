@@ -124,8 +124,35 @@ export const useAuth = create<AuthState>((set, get) => ({
     }
     try {
       const ok = await get().refreshTokens();
-      if (!ok) clearTokens();
-      else syncTimezoneToBackend(); // Phase 14: sync tz on session restore
+      if (!ok) {
+        clearTokens();
+      } else {
+        // Phase 11/12 fix: POST /auth/refresh only ever returns a
+        // TokenPair (see backend/api/auth.py, response_model=TokenPair) —
+        // it never included the user object. refreshTokens() below only
+        // sets accessToken, so `user` was staying null on every session
+        // restore (i.e. every page reload while logged in), which made
+        // AuthGate treat a genuinely-logged-in person as unauthenticated
+        // and bounce them to /login. Fetch the user explicitly via
+        // GET /me (backend/api/profile.py) once the token is fresh.
+        try {
+          const token = getAccessToken();
+          const res = await fetch(`${API_BASE}/me`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          });
+          if (res.ok) {
+            const user: AuthUser = await res.json();
+            set({ user });
+          } else {
+            clearTokens();
+            set({ user: null, accessToken: null });
+          }
+        } catch {
+          clearTokens();
+          set({ user: null, accessToken: null });
+        }
+        syncTimezoneToBackend(); // Phase 14: sync tz on session restore
+      }
     } catch {
       clearTokens();
     }
