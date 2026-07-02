@@ -185,6 +185,7 @@ export function chatStream(
   message: string,
   convId: number | null | undefined,
   callbacks: StreamCallbacks,
+  imageDataUri?: string | null,
 ): () => void {
   if (!isLive) {
     // Offline / mock: simulate streaming with a timeout
@@ -243,7 +244,11 @@ export function chatStream(
           "X-Stream-Id": streamId,
           ...(getAccessToken() ? { Authorization: `Bearer ${getAccessToken()}` } : {}),
         },
-        body: JSON.stringify({ message, conv_id: convId ?? null }),
+        body: JSON.stringify({
+          message,
+          conv_id: convId ?? null,
+          ...(imageDataUri ? { image_data_uri: imageDataUri } : {}),
+        }),
         signal: controller.signal,
       });
 

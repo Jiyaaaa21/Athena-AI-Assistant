@@ -34,6 +34,26 @@ try:
 except Exception:
     pass  # non-fatal — older Python or non-standard stream, fall through
 
+
+def _console_handler() -> logging.StreamHandler:
+    """
+    Phase 28 addition: these loggers previously wrote ONLY to a file under
+    logs/ -- fine for local dev (readable via `Get-Content logs/*.log`),
+    but effectively invisible in production. Render's Logs dashboard only
+    captures stdout/stderr, not arbitrary files on disk, and Render's free
+    tier disk is ephemeral anyway (wiped on redeploy/restart/idle
+    spin-down -- same issue already fixed for document storage). Without
+    this, there was no way to see agent/tool/error activity on a deployed
+    instance at all. Each logger now writes to both its file (still useful
+    for local dev, where it survives restarts within a session) and stdout
+    (so `Get-Content` still works locally, and Render's log viewer works
+    in production).
+    """
+    h = logging.StreamHandler(sys.stdout)
+    h.setFormatter(formatter)
+    return h
+
+
 # ------------------------
 # AGENT LOGGER
 # ------------------------
@@ -57,6 +77,7 @@ agent_handler.setFormatter(
 agent_logger.addHandler(
     agent_handler
 )
+agent_logger.addHandler(_console_handler())
 
 # ------------------------
 # TOOL LOGGER
@@ -81,6 +102,7 @@ tool_handler.setFormatter(
 tool_logger.addHandler(
     tool_handler
 )
+tool_logger.addHandler(_console_handler())
 
 # ------------------------
 # ERROR LOGGER
@@ -105,3 +127,4 @@ error_handler.setFormatter(
 error_logger.addHandler(
     error_handler
 )
+error_logger.addHandler(_console_handler())

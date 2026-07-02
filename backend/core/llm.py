@@ -11,6 +11,10 @@ Phase 15 fixes:
 - All existing function signatures preserved for backward compatibility.
 """
 
+from __future__ import annotations
+
+from typing import Generator
+
 from groq import Groq
 from backend.core.config import GROQ_API_KEY, GEMINI_API_KEY
 from backend.core.memory_service import get_history
@@ -84,6 +88,25 @@ def _gemini_complete(messages: list[dict]) -> str:
     return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
+def _parse_gemini_sse(resp) -> Generator[str, None, None]:
+    """Shared SSE-chunk parser for both the text-fallback stream and the
+    vision stream below -- keeping this in one place means a fix to how
+    Gemini's stream is parsed only has to happen once."""
+    for line in resp.iter_lines(decode_unicode=True):
+        if not line or not line.startswith("data: "):
+            continue
+        raw = line[len("data: "):].strip()
+        if raw == "[DONE]":
+            break
+        try:
+            chunk = json.loads(raw)
+            text = chunk["candidates"][0]["content"]["parts"][0].get("text", "")
+        except (KeyError, IndexError, json.JSONDecodeError):
+            continue
+        if text:
+            yield text
+
+
 def _gemini_complete_stream(messages: list[dict]):
     if not GEMINI_API_KEY:
         yield (
@@ -100,19 +123,174 @@ def _gemini_complete_stream(messages: list[dict]):
         stream=True,
     ) as resp:
         resp.raise_for_status()
-        for line in resp.iter_lines(decode_unicode=True):
-            if not line or not line.startswith("data: "):
-                continue
-            raw = line[len("data: "):].strip()
-            if raw == "[DONE]":
-                break
-            try:
-                chunk = json.loads(raw)
-                text = chunk["candidates"][0]["content"]["parts"][0].get("text", "")
-            except (KeyError, IndexError, json.JSONDecodeError):
-                continue
-            if text:
-                yield text
+        yield from _parse_gemini_sse(resp)
+
+
+# ── Phase 28: image understanding ─────────────────────────────────────────────
+#
+# Uploading an image in the composer previously did nothing beyond showing a
+# local preview -- the actual bytes never reached the LLM. The text sent to
+# the backend was just a placeholder like "Please analyze this image:
+# photo.jpg", with no visual data attached at all, so any answer was either
+# an admission it couldn't see the image or an outright hallucination.
+#
+# This routes image-bearing messages through Gemini specifically, not Groq.
+# Groq does have vision-capable models, but its lineup has been through
+# repeated deprecation churn recently (Llama 4 Scout and Maverick both
+# deprecated in favor of openai/gpt-oss-120b), and that replacement model is
+# confirmed NOT to accept image input on Groq at all (returns "messages[1]
+# .content must be a string" for a multimodal request). Guessing at whichever
+# Groq vision model happens to be current risks a confusing failure; Gemini's
+# multimodal support is stable and well-documented, so images always go
+# there, independent of whatever text model Groq happens to be serving.
+
+_SUPPORTED_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
+
+
+def _parse_data_uri(data_uri: str) -> tuple[str, str] | None:
+    """'data:image/png;base64,AAAA...' -> ('image/png', 'AAAA...'). None if malformed."""
+    if not data_uri or not data_uri.startswith("data:") or "," not in data_uri:
+        return None
+    header, b64data = data_uri.split(",", 1)
+    mime_type = header[len("data:"):].split(";")[0].strip().lower()
+    if not mime_type or not b64data:
+        return None
+    return mime_type, b64data
+
+
+def _gemini_vision_payload(messages: list[dict], image_data_uri: str) -> dict | None:
+    """Returns None if the image couldn't be parsed -- caller shows a clean
+    error rather than sending a malformed request to Gemini."""
+    parsed = _parse_data_uri(image_data_uri)
+    if not parsed:
+        return None
+    mime_type, b64data = parsed
+
+    system_text, contents = _messages_to_gemini(messages)
+    image_part = {"inline_data": {"mime_type": mime_type, "data": b64data}}
+    # Attach the image to the current (last) user turn specifically, not
+    # spread across history -- images aren't persisted long-term (see
+    # note in api/chat.py), so only the turn that actually carries one
+    # should claim to have it.
+    if contents and contents[-1]["role"] == "user":
+        contents[-1]["parts"].append(image_part)
+    else:
+        contents.append({"role": "user", "parts": [image_part]})
+
+    payload: dict = {
+        "contents": contents,
+        "generationConfig": {"temperature": _SAMPLING_PARAMS["temperature"]},
+    }
+    if system_text:
+        payload["systemInstruction"] = {"parts": [{"text": system_text}]}
+    return payload
+
+
+def _unsupported_image_message(mime_type: str | None) -> str:
+    if mime_type == "image/gif":
+        return (
+            "I can't analyze GIFs yet — only PNG, JPEG, and WebP images are "
+            "supported for image understanding right now. If it's a single "
+            "frame you want analyzed, try saving it as a PNG or JPEG first."
+        )
+    return (
+        f"I can't analyze that image format ({mime_type or 'unrecognized'}) — "
+        f"PNG, JPEG, and WebP are supported."
+    )
+
+
+def _build_vision_messages(user_message: str) -> list[dict]:
+    system = _build_context_system_prompt()
+    messages = [{"role": "system", "content": system}]
+    messages.extend(_trim_history(get_history()))
+    messages.append({"role": "user", "content": user_message or "What's in this image?"})
+    return messages
+
+
+_NO_VISION_PROVIDER_MESSAGE = (
+    "I can't analyze images right now — image understanding requires a "
+    "GEMINI_API_KEY to be configured on the server (Groq, the primary "
+    "provider, doesn't support image input on this deployment). Free, no "
+    "credit card: https://aistudio.google.com/apikey."
+)
+
+
+def ask_llm_with_image(user_message: str, image_data_uri: str) -> str:
+    """Non-streaming image understanding. Always via Gemini -- see module
+    note above for why Groq is deliberately not attempted for vision."""
+    if not GEMINI_API_KEY:
+        return _NO_VISION_PROVIDER_MESSAGE
+
+    parsed = _parse_data_uri(image_data_uri)
+    if not parsed:
+        return "I couldn't read that image — the file may be corrupted or in an unsupported format."
+    mime_type, _ = parsed
+    if mime_type not in _SUPPORTED_IMAGE_MIME_TYPES:
+        return _unsupported_image_message(mime_type)
+
+    messages = _build_vision_messages(user_message)
+    payload = _gemini_vision_payload(messages, image_data_uri)
+    if payload is None:
+        return "I couldn't read that image — the file may be corrupted or in an unsupported format."
+
+    try:
+        resp = requests.post(
+            f"{_GEMINI_BASE}:generateContent",
+            headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
+            json=payload,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception as e:
+        error_logger.error(f"[llm] Vision request failed: {e}")
+        return "I had trouble analyzing that image just now. Please try again in a moment."
+
+
+def ask_llm_with_image_stream(user_message: str, image_data_uri: str):
+    """Streaming image understanding. Always via Gemini -- see module note
+    above for why Groq is deliberately not attempted for vision."""
+    if not GEMINI_API_KEY:
+        yield _NO_VISION_PROVIDER_MESSAGE
+        return
+
+    parsed = _parse_data_uri(image_data_uri)
+    if not parsed:
+        yield "I couldn't read that image — the file may be corrupted or in an unsupported format."
+        return
+    mime_type, _ = parsed
+    if mime_type not in _SUPPORTED_IMAGE_MIME_TYPES:
+        yield _unsupported_image_message(mime_type)
+        return
+
+    messages = _build_vision_messages(user_message)
+    payload = _gemini_vision_payload(messages, image_data_uri)
+    if payload is None:
+        yield "I couldn't read that image — the file may be corrupted or in an unsupported format."
+        return
+
+    try:
+        with requests.post(
+            f"{_GEMINI_BASE}:streamGenerateContent?alt=sse",
+            headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
+            json=payload,
+            timeout=120,
+            stream=True,
+        ) as resp:
+            resp.raise_for_status()
+            yielded_any = False
+            for chunk in _parse_gemini_sse(resp):
+                yielded_any = True
+                yield chunk
+            if not yielded_any:
+                yield (
+                    "I looked at the image but couldn't come up with a response — "
+                    "try asking again, maybe with a more specific question."
+                )
+    except Exception as e:
+        error_logger.error(f"[llm] Vision stream request failed: {e}")
+        yield "I had trouble analyzing that image just now. Please try again in a moment."
 
 
 def _groq_complete(messages: list[dict]) -> str:

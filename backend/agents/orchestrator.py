@@ -585,8 +585,30 @@ def route_and_run(query: str, conv_id: int | None = None) -> AgentResult:
 def route_and_stream(
     query: str,
     conv_id: int | None = None,
+    image_data_uri: str | None = None,
 ) -> Generator[dict, None, AgentResult]:
-    agent_logger.info(f"[Orchestrator] stream query={query!r}")
+    agent_logger.info(f"[Orchestrator] stream query={query!r} has_image={bool(image_data_uri)}")
+
+    # Phase 28: an attached image is an unambiguous signal to just look at
+    # the image -- bypass routine-matching and agent routing entirely
+    # rather than risk them interpreting an image-analysis request as,
+    # say, a note-saving or reminder-setting command. None of the
+    # specialized agents (rag, news, weather, notes, ...) have anything
+    # useful to do with an image anyway.
+    if image_data_uri:
+        from backend.core.llm import ask_llm_with_image_stream
+        yield {"type": "status", "text": "Looking at the image…", "agent": "athena"}
+        full = ""
+        for chunk in ask_llm_with_image_stream(query, image_data_uri):
+            full += chunk
+            yield {"type": "token", "text": chunk}
+        result = AgentResult(
+            answer=full,
+            agent_name="athena",
+            steps=["Image understanding (vision)"],
+        )
+        yield {"type": "done", "result": result}
+        return result
 
     # Phase 18: routine trigger phrases take priority, same as route_and_run.
     # Streamed word-by-word for a consistent voice/chat experience.

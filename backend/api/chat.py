@@ -244,6 +244,13 @@ async def chat_upload_context(file: UploadFile = File(...)):
 class StreamRequest(BaseModel):
     message: str
     conv_id: Optional[int] = None
+    # Phase 28 addition: base64 data URI of an image attached in the
+    # composer (e.g. "data:image/png;base64,..."). Previously the actual
+    # image bytes never left the browser -- only a text placeholder like
+    # "Please analyze this image: photo.jpg" reached the backend, so
+    # Athena had no visual data to work with at all. See core/llm.py's
+    # ask_llm_with_image_stream() for how this gets used.
+    image_data_uri: Optional[str] = None
 
 
 
@@ -294,7 +301,7 @@ def _log_agent_call(user_id, agent_name: str, query: str, conv_id: int):
 
 
 
-async def _stream_generator(message: str, conv_id: Optional[int], stream_id: str):
+async def _stream_generator(message: str, conv_id: Optional[int], stream_id: str, image_data_uri: Optional[str] = None):
     """
     SSE generator — delegates to the multi-agent orchestrator.
 
@@ -334,7 +341,7 @@ async def _stream_generator(message: str, conv_id: Optional[int], stream_id: str
         def _run_orchestrator():
             def _inner():
                 try:
-                    for event in route_and_stream(message, conv_id=conv_id):
+                    for event in route_and_stream(message, conv_id=conv_id, image_data_uri=image_data_uri):
                         event_queue.put_nowait(event)
                 except Exception as exc:
                     event_queue.put_nowait({"type": "error", "text": str(exc)})
@@ -430,12 +437,24 @@ async def _stream_generator(message: str, conv_id: Optional[int], stream_id: str
 
 @router.post("/chat/stream")
 async def chat_stream(payload: StreamRequest, request: Request):
+    # Phase 28: /chat/upload-context already caps images at
+    # MAX_CHAT_UPLOAD_MB, but that only constrains the normal
+    # composer-attach flow. Nothing stopped a request built by hand (or a
+    # future frontend bug) from sending an arbitrarily large
+    # image_data_uri straight into this endpoint's JSON body. Reject
+    # early with the same cap rather than accepting anything.
+    if payload.image_data_uri and len(payload.image_data_uri) > MAX_CHAT_UPLOAD_MB * 1024 * 1024 * 2:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image is too large — please attach one under {MAX_CHAT_UPLOAD_MB} MB.",
+        )
+
     stream_id = request.headers.get("X-Stream-Id") or str(uuid.uuid4())
     cancel_event = asyncio.Event()
     _cancel_events[stream_id] = cancel_event
 
     return StreamingResponse(
-        _stream_generator(payload.message, payload.conv_id, stream_id),
+        _stream_generator(payload.message, payload.conv_id, stream_id, payload.image_data_uri),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

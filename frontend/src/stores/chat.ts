@@ -275,6 +275,7 @@ export const useChat = create<ChatState>((set, get) => ({
           }));
         },
       },
+      uploadedContext?.image_data_uri,
     );
 
     set({ _cancelStream: cancel });
@@ -305,6 +306,28 @@ export const useChat = create<ChatState>((set, get) => ({
       msgs[msgs.length - 1]?.role === "assistant" ? msgs.slice(0, -1) : msgs;
 
     set({ messages: trimmed });
-    get().sendStream(lastUser.content);
+
+    // Phase 28 fix: if the message being regenerated had an image
+    // attached, reconstruct that context and pass it through too --
+    // previously this only re-sent the display text, so regenerating an
+    // image-analysis answer would silently arrive with no image at all.
+    const reconstructedFile: UploadedFile | undefined = lastUser.imagePreview
+      ? {
+          filename: lastUser.imageFilename || "image",
+          content_type: "image/*",
+          image_data_uri: lastUser.imagePreview,
+        }
+      : undefined;
+
+    // The auto-generated "[Attached: filename]" placeholder (used when the
+    // original message was just an image with no typed text) shouldn't be
+    // re-sent as if it were real typed text -- buildMessageWithContext()
+    // already produces a sensible default prompt when given an empty
+    // string plus an image, so strip the placeholder back out here.
+    const textToResend = lastUser.content.startsWith("[Attached: ")
+      ? ""
+      : lastUser.content;
+
+    get().sendStream(textToResend, reconstructedFile);
   },
 }));
