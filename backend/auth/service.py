@@ -30,36 +30,35 @@ from backend.auth.schemas import TokenPair
 
 
 def _utcnow():
+    """Timezone-aware current UTC time."""
+    return datetime.now(timezone.utc)
+
+
+def _as_aware_utc(dt):
     """
-    Phase 17 fix — return naive UTC, not timezone-aware UTC.
+    Phase 17 fix (revised) — normalize at comparison time instead of
+    picking one canonical "naive vs aware" representation for _utcnow().
 
-    The RefreshToken/PasswordResetToken models declare their expires_at
-    columns as DateTime(timezone=True), and this function used to return
-    datetime.now(timezone.utc) (timezone-AWARE) to match. That's correct
-    for PostgreSQL, which actually stores and returns tzinfo. SQLite has
-    no native timezone-aware datetime type, though — SQLAlchemy's
-    DateTime(timezone=True) is silently downgraded on SQLite: values are
-    written as naive ISO strings and read back as naive datetime objects
-    regardless of the column's declared type.
+    The previous fix made _utcnow() return naive UTC specifically to
+    match SQLite, whose SQLAlchemy dialect silently downgrades
+    DateTime(timezone=True) columns to naive datetimes on read,
+    regardless of what was written. That masked the bug in local dev
+    but reintroduced it on real PostgreSQL (e.g. Neon in production),
+    which *does* correctly round-trip timezone-aware datetimes for
+    DateTime(timezone=True) columns — comparing that aware value
+    against a now-naive _utcnow() raises the same unhandled TypeError
+    this was meant to fix, just with the two sides swapped.
 
-    The result: every write here stored an AWARE datetime, but every read
-    back out of the database (row.expires_at) came back NAIVE. The
-    comparison `row.expires_at < _utcnow()` then mixed an aware and a
-    naive datetime, which Python raises as an unhandled TypeError, not an
-    HTTPException — bypassing FastAPI's normal error response entirely
-    and returning a raw, header-less 500. The browser sees a response
-    with no Access-Control-Allow-Origin header and reports it as a CORS
-    failure, even though CORS was never the actual problem.
-
-    Fix: make this function return naive UTC so it matches what SQLite
-    actually round-trips. This keeps all reads/writes in this file
-    internally consistent. (On PostgreSQL in production, naive-UTC
-    comparisons against an aware-UTC column also work correctly as long
-    as both sides are naive — SQLAlchemy doesn't require timezone
-    metadata to compare two UTC instants meaningfully here, since this
-    codebase exclusively works in UTC, never local time, at this layer.)
+    This normalizes whatever comes back from the database — naive
+    (SQLite) or aware (PostgreSQL) — into an aware UTC datetime before
+    any comparison, so the comparison is safe on both backends instead
+    of only whichever one was tested most recently.
     """
-    return datetime.utcnow()
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def normalize_email(email: str) -> str:
@@ -179,7 +178,7 @@ def rotate_refresh_token(
         ).update({"revoked": True})
         db.commit()
         raise invalid
-    if row.expires_at < _utcnow():
+    if _as_aware_utc(row.expires_at) < _utcnow():
         raise invalid
 
     user = db.query(User).filter(User.id == row.user_id).first()
@@ -254,7 +253,7 @@ def reset_password(db: Session, raw_token: str, new_password: str) -> None:
         PasswordResetToken.token_hash == token_hash
     ).first()
 
-    if not row or row.used or row.expires_at < _utcnow():
+    if not row or row.used or _as_aware_utc(row.expires_at) < _utcnow():
         raise invalid
 
     user = db.query(User).filter(User.id == row.user_id).first()
