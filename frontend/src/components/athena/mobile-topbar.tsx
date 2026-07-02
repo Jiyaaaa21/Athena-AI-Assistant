@@ -40,7 +40,7 @@ export function MobileTopbar() {
         <SheetContent side="left" className="p-0 w-72">
           <SheetTitle className="sr-only">Navigation</SheetTitle>
           <div className="[&>aside]:flex [&>aside]:h-svh [&>aside]:w-72">
-            <AppSidebar />
+            <AppSidebar onNavigate={() => setOpen(false)} />
           </div>
         </SheetContent>
       </Sheet>

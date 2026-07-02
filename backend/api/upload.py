@@ -1,6 +1,5 @@
 import hashlib
 import io
-import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
@@ -9,24 +8,13 @@ from pypdf import PdfReader
 from backend.rag.pdf_loader import load_pdf, get_pdf_page_count
 from backend.rag.chunker import chunk_text
 from backend.rag.embedder import create_embeddings
-from backend.rag.vector_store import store_chunks
+from backend.rag.vector_store import store_chunks, delete_by_source
 from backend.database.db import SessionLocal
 from backend.database.models import Document
 from backend.core.config import MAX_UPLOAD_SIZE_MB, MAX_UPLOAD_PAGES
 from backend.core.request_context import get_current_user_id
 
 router = APIRouter()
-
-DOCUMENTS_DIR = "data/documents"
-
-
-def user_documents_dir(user_id) -> str:
-    """
-    Phase 12: every user's uploaded PDFs live under their own subdirectory
-    so two users can both upload a file with the same name without one
-    overwriting the other's on disk.
-    """
-    return os.path.join(DOCUMENTS_DIR, str(user_id) if user_id is not None else "_unowned")
 
 
 def _serialize(document: Document) -> dict:
@@ -50,16 +38,15 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     user_id = get_current_user_id()
-    docs_dir = user_documents_dir(user_id)
 
     # Read the whole file into memory once, so we can both hash it (for
-    # duplicate detection) and write it to disk from the same bytes,
-    # instead of reading the upload stream twice.
+    # duplicate detection) and persist it, instead of reading the upload
+    # stream twice.
     file_bytes = await file.read()
     size_bytes = len(file_bytes)
 
-    # Phase 8: reject oversized files before any disk I/O, hashing, or DB
-    # writes -- fail fast and cheaply rather than after partially processing.
+    # Phase 8: reject oversized files before any DB writes -- fail fast and
+    # cheaply rather than after partially processing.
     max_bytes = MAX_UPLOAD_SIZE_MB * 1024 * 1024
     if size_bytes > max_bytes:
         raise HTTPException(
@@ -71,8 +58,7 @@ async def upload_document(
         )
 
     # Phase 8: also cap page count -- a small-but-extremely-long PDF can be
-    # just as expensive to embed as a large file. Checked in-memory (no
-    # disk write yet) so a rejected upload leaves nothing behind.
+    # just as expensive to embed as a large file.
     try:
         page_count = len(PdfReader(io.BytesIO(file_bytes)).pages)
     except Exception:
@@ -125,18 +111,13 @@ async def upload_document(
         if hash_match and hash_match.filename == file.filename:
             return _serialize(hash_match)
 
-        # Phase 2 fix: this directory was never created anywhere, so the
-        # original endpoint would throw FileNotFoundError on a fresh checkout.
-        os.makedirs(docs_dir, exist_ok=True)
-
-        save_path = f"{docs_dir}/{file.filename}"
-
-        with open(save_path, "wb") as buffer:
-            buffer.write(file_bytes)
-
-        # Phase 2: persist a row up front with status="processing" so a
-        # concurrent GET /documents (or a slow embed step) shows the file
-        # immediately rather than it being invisible until everything finishes.
+        # Phase 25 fix: PDFs used to be written to data/documents/... on
+        # local disk, which is wiped on every Render free-tier redeploy,
+        # restart, or idle spin-down. Persisting the raw bytes in the
+        # Document row itself (Postgres/Neon, which is not on that
+        # ephemeral disk) means the file survives exactly as long as its
+        # database row does -- no separate storage system to keep in sync,
+        # at zero additional cost.
         # Same filename + different hash = legitimate re-upload/update of an
         # existing document; overwrite it in place rather than erroring.
         # Phase 12: scoped to the current user -- one user re-uploading
@@ -150,6 +131,15 @@ async def upload_document(
             document.status = "processing"
             document.size_bytes = size_bytes
             document.content_hash = content_hash
+            document.file_data = file_bytes
+            # Phase 25 fix: a re-upload never removed the previous chunks
+            # for this document, so every re-upload silently accumulated a
+            # duplicate, stale set of embeddings alongside the fresh ones.
+            # Harmless-looking with ChromaDB on ephemeral disk (the old
+            # chunks usually got wiped before anyone noticed), but a real
+            # bug now that storage is durable -- clear them before
+            # re-embedding.
+            delete_by_source(file.filename, user_id=user_id)
         else:
             document = Document(
                 filename=file.filename,
@@ -158,6 +148,7 @@ async def upload_document(
                 uploaded_at=datetime.now(timezone.utc),
                 content_hash=content_hash,
                 user_id=user_id,
+                file_data=file_bytes,
             )
             db.add(document)
 
@@ -165,9 +156,10 @@ async def upload_document(
         db.refresh(document)
 
         try:
-            # Extract
-            text = load_pdf(save_path)
-            pages = get_pdf_page_count(save_path)
+            # Extract (PdfReader accepts a file-like object directly, so no
+            # disk round-trip is needed here either).
+            text = load_pdf(io.BytesIO(file_bytes))
+            pages = get_pdf_page_count(io.BytesIO(file_bytes))
 
             # Chunk
             chunks = chunk_text(text)
@@ -181,6 +173,7 @@ async def upload_document(
                 embeddings,
                 file.filename,
                 user_id=user_id,
+                document_id=document.id,
             )
 
             document.status = "processed"

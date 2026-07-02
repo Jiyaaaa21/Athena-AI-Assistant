@@ -1,10 +1,3 @@
-/**
- * AppSidebar — Sidebar with collapsible nav sections + ChatGPT-style conversation list.
- * Changes (Issue #1):
- *  - Knowledge and Live nav sections are now collapsible (toggle open/closed).
- *  - ConversationManager is given flex-1 so it fills available vertical space.
- *  - Agent Panel moved into collapsible section to save space.
- */
 import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
 import { ConversationManager } from "./conversation-manager";
 import { AgentPanel } from "./agent-panel";
@@ -41,7 +34,7 @@ const NAV_LIVE = [
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
 ] as const;
 
-export function AppSidebar() {
+export function AppSidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { collapsed, toggle } = useSidebar();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const resetChat = useChat((s) => s.reset);
@@ -56,18 +49,34 @@ export function AppSidebar() {
 
   const handleLogout = async () => {
     await logout();
+    onNavigate?.();
     navigate({ to: "/login" });
   };
 
   const handleSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && q.trim()) {
+      onNavigate?.();
       navigate({ to: "/search", hash: encodeURIComponent(q.trim()) });
       setQ("");
     }
   };
 
+  // On mobile, AppSidebar is rendered inside a Sheet (see mobile-topbar.tsx)
+  // that has no idea any of these <Link>s were clicked. Rather than wiring
+  // onClick individually onto every single nav item below (New Chat, Chat,
+  // Search, each Knowledge/Live entry, Settings, ...), delegate: any click
+  // that lands on an <a> anywhere inside the sidebar closes the drawer.
+  // No-op on desktop (onNavigate is undefined there).
+  const handleSidebarClick = (e: React.MouseEvent<HTMLElement>) => {
+    if (!onNavigate) return;
+    if ((e.target as HTMLElement).closest("a")) {
+      onNavigate();
+    }
+  };
+
   return (
     <aside
+      onClick={handleSidebarClick}
       className={cn(
         "hidden md:flex h-svh sticky top-0 bg-sidebar border-r border-border flex-col shrink-0 transition-[width] duration-300 ease-out",
         collapsed ? "w-[68px]" : "w-60",

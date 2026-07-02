@@ -9,6 +9,8 @@ from sqlalchemy import (
     ForeignKey,
     UniqueConstraint,
     Index,
+    LargeBinary,
+    Float,
 )
 from datetime import datetime, timezone
  
@@ -257,12 +259,65 @@ class Document(Base):
     # upload must never short-circuit because a *different* user happened
     # to upload byte-identical content.
     content_hash = Column(String, nullable=True, index=True)
- 
+
+    # Phase 25 fix: Render's free tier has an ephemeral filesystem -- any
+    # file written to local disk (data/documents/...) is silently wiped on
+    # every redeploy, restart, AND on the routine spin-down/cold-start
+    # cycle free instances go through after ~15 minutes idle. The row here
+    # kept saying "Indexed" forever while the actual PDF (and its
+    # ChromaDB-backed embeddings, see DocumentChunk below) quietly
+    # vanished. Storing the raw bytes directly in Postgres (Neon, which
+    # *is* persistent) fixes this at zero additional cost -- no new
+    # service, no paid disk, just the database this app already has.
+    # Fine for this app's use case (personal PDFs under MAX_UPLOAD_SIZE_MB);
+    # not a pattern to reach for at large scale/high volume.
+    file_data = Column(LargeBinary, nullable=True)
+
     __table_args__ = (
         UniqueConstraint("user_id", "filename", name="uq_documents_user_filename"),
     )
- 
- 
+
+
+class DocumentChunk(Base):
+    """
+    Phase 25 addition: replaces the ChromaDB-backed vector store
+    (rag/vector_store.py used to persist to data/chroma_db, also on
+    Render's ephemeral disk -- same problem as Document.file_data above,
+    just for embeddings instead of the raw PDF).
+
+    Embeddings are stored as a JSON-encoded list of floats in a plain Text
+    column rather than a Postgres-native vector type (e.g. pgvector) --
+    this keeps the app working unmodified against BOTH the Postgres
+    deployment (Neon) and a plain SQLite file for local dev (DATABASE_URL
+    defaults to sqlite:///athena.db), with no extra extension to enable
+    and no new dependency. Similarity search is done in Python
+    (rag/vector_store.py) via numpy cosine similarity over each user's own
+    chunks -- at the scale of a personal assistant's document set (dozens
+    to a few hundred chunks per user) this is comfortably fast and avoids
+    taking on pgvector as a hard requirement just to stay free-tier-safe
+    on every possible database backend this app might run against.
+    """
+
+    __tablename__ = "document_chunks"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+
+    # Denormalized (also reachable via document_id -> Document.filename) so
+    # existing RAG code that keys sources off a filename string needs no
+    # changes.
+    source = Column(String, index=True)
+
+    chunk_index = Column(Integer, default=0)
+    text = Column(Text)
+
+    # JSON-encoded list[float] -- see class docstring for why not a native
+    # vector column.
+    embedding = Column(Text)
+
+
 class UserPreference(Base):
     """
     Phase 4.5 addition: stores user preferences as a JSON blob under a named
@@ -670,4 +725,3 @@ class ProactiveInsight(Base):
     delivered   = Column(Boolean, nullable=False, default=False)  # push actually sent
     dismissed   = Column(Boolean, nullable=False, default=False)
     created_at  = Column(DateTime(timezone=True), default=utcnow, index=True)
- 

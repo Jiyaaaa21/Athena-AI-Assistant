@@ -1,104 +1,139 @@
-import chromadb
-import uuid
+"""
+rag/vector_store.py — Phase 25: moved off ChromaDB / local disk entirely.
+
+Why this changed
+-----------------
+ChromaDB's PersistentClient wrote to data/chroma_db on local disk. On
+Render's free tier that disk is ephemeral: every redeploy, restart, and
+routine spin-down/cold-start cycle (free instances sleep after ~15 minutes
+idle) silently wiped it. A document could show "Indexed" in the UI
+forever while its actual embeddings were gone the next time the service
+woke back up.
+
+This version stores chunks + embeddings as rows in the same Postgres
+database (Neon, persistent) everything else already uses, via the
+DocumentChunk model. Similarity search is done in Python with numpy
+cosine similarity over the current user's own chunks. At the scale this
+app operates at (a personal assistant's own documents -- dozens to a few
+hundred chunks per user), this is comfortably fast and keeps the whole
+fix at zero additional cost: no new service, no paid disk, no new
+dependency, and it works unmodified against both the Postgres deployment
+and a local SQLite file for dev.
+
+Public API is unchanged (store_chunks / search_chunks / delete_by_source)
+so every existing call site (api/upload.py, api/documents.py,
+rag/rag_pipeline.py) needs no changes at all beyond this file.
+"""
+
+from __future__ import annotations
+
+import json
+
+import numpy as np
 
 from backend.core.request_context import get_current_user_id
-
-client = chromadb.PersistentClient(
-    path="data/chroma_db"
-)
-
-collection = client.get_or_create_collection(
-    name="athena_docs",
-    # Phase 15 fix: rag_pipeline._cosine_to_confidence() assumes distances
-    # come back in the cosine range [0, 2] ("0 = identical, 2 = opposite").
-    # Without this, get_or_create_collection() falls back to ChromaDB's
-    # default distance metric, which is squared L2 -- not cosine. With
-    # unnormalized MiniLM embeddings, L2 distances routinely land well
-    # above 2 even for a strong semantic match, which the confidence
-    # formula then maps to a large NEGATIVE score. Every single retrieval
-    # -- including a perfect match against a document uploaded seconds
-    # earlier -- was failing the _MIN_CONFIDENCE=20 threshold and getting
-    # discarded before the LLM ever saw it, producing "I couldn't find
-    # that in your uploaded documents" regardless of what was actually
-    # indexed.
-    metadata={"hnsw:space": "cosine"},
-)
+from backend.database.db import SessionLocal
+from backend.database.models import DocumentChunk
 
 
 def _resolve_user_id(user_id):
-    """Phase 12: default to the current request's authenticated user when
-    the caller doesn't pass one explicitly. Falls back to the contextvar so
-    legacy call sites (RAGTool.run, which only receives a query string and
-    has no way to pass user_id) still get correctly scoped."""
+    """Same fallback behaviour as before: default to the current request's
+    authenticated user when the caller doesn't pass one explicitly."""
     return user_id if user_id is not None else get_current_user_id()
 
 
-def store_chunks(chunks, embeddings, filename, user_id=None):
-
+def store_chunks(chunks, embeddings, filename, user_id=None, document_id=None):
     user_id = _resolve_user_id(user_id)
 
-    ids = [
-        str(uuid.uuid4())
-        for _ in chunks
-    ]
+    db = SessionLocal()
+    try:
+        rows = [
+            DocumentChunk(
+                document_id=document_id,
+                user_id=user_id,
+                source=filename,
+                chunk_index=i,
+                text=chunk,
+                embedding=json.dumps(np.asarray(vec, dtype=np.float32).tolist()),
+            )
+            for i, (chunk, vec) in enumerate(zip(chunks, embeddings))
+        ]
+        db.bulk_save_objects(rows)
+        db.commit()
+    finally:
+        db.close()
 
-    metadatas = [
-        {
-            "source": filename,
-            # Phase 12 addition: every chunk is tagged with its owning user
-            # so search_chunks() can filter cross-user leakage at the
-            # ChromaDB query level, not just in the SQL layer.
-            "user_id": str(user_id) if user_id is not None else "",
-        }
-        for _ in chunks
-    ]
 
-    collection.add(
-        ids=ids,
-        documents=chunks,
-        embeddings=embeddings.tolist(),
-        metadatas=metadatas
-    )
+def _cosine_distance(query_vec: np.ndarray, chunk_vec: np.ndarray) -> float:
+    """
+    Returns a distance in [0, 2] where 0 = identical, 2 = opposite --
+    matching exactly what rag_pipeline._cosine_to_confidence() expects
+    (this is the same contract the old ChromaDB cosine-space collection
+    was supposed to provide, before the metric-mismatch bug).
+    """
+    qn = np.linalg.norm(query_vec)
+    cn = np.linalg.norm(chunk_vec)
+    if qn == 0 or cn == 0:
+        return 2.0  # maximally dissimilar rather than dividing by zero
+    cosine_similarity = float(np.dot(query_vec, chunk_vec) / (qn * cn))
+    cosine_similarity = max(-1.0, min(1.0, cosine_similarity))  # clamp fp drift
+    return 1.0 - cosine_similarity
 
 
 def search_chunks(query_embedding, top_k=5, user_id=None):
-
+    """
+    Returns results shaped exactly like a ChromaDB query response
+    (results["documents"][0], ["metadatas"][0], ["distances"][0]) so
+    rag_pipeline.py -- written against that shape -- needs no changes.
+    """
     user_id = _resolve_user_id(user_id)
+    query_vec = np.asarray(query_embedding, dtype=np.float32)
 
-    where = {"user_id": str(user_id)} if user_id is not None else None
+    db = SessionLocal()
+    try:
+        q = db.query(DocumentChunk)
+        if user_id is not None:
+            q = q.filter(DocumentChunk.user_id == user_id)
+        rows = q.all()
 
-    results = collection.query(
-        query_embeddings=[
-            query_embedding.tolist()
-        ],
-        n_results=top_k,
-        where=where,
-        # Phase 8 addition: "distances" lets rag_pipeline.rag_answer compute
-        # a relevance/confidence score per source. Not requested before, so
-        # results never carried any sense of "how sure" a match was.
-        include=["documents", "metadatas", "distances"]
-    )
+        scored = []
+        for row in rows:
+            try:
+                chunk_vec = np.asarray(json.loads(row.embedding), dtype=np.float32)
+            except (TypeError, ValueError):
+                continue
+            dist = _cosine_distance(query_vec, chunk_vec)
+            scored.append((dist, row))
 
-    return results
+        scored.sort(key=lambda pair: pair[0])
+        top = scored[:top_k]
+
+        documents = [row.text for _dist, row in top]
+        metadatas = [{"source": row.source, "user_id": str(row.user_id or "")} for _dist, row in top]
+        distances = [dist for dist, _row in top]
+
+        return {
+            "documents": [documents],
+            "metadatas": [metadatas],
+            "distances": [distances],
+        }
+    finally:
+        db.close()
 
 
 def delete_by_source(filename, user_id=None):
     """
-    Phase 2 addition: needed by DELETE /documents/{id} so removing a
-    document also removes its embedded chunks, instead of leaving orphaned
-    vectors in the collection that the RAG tool would keep retrieving from.
-
-    Phase 12 change: scoped to the owning user so deleting "report.pdf"
-    can never delete a different user's same-named document's chunks.
+    Phase 12: scoped to the owning user so deleting "report.pdf" can never
+    delete a different user's same-named document's chunks.
     """
-
     user_id = _resolve_user_id(user_id)
 
-    where = {
-        "$and": [
-            {"source": filename},
-            {"user_id": str(user_id) if user_id is not None else ""},
-        ]
-    }
-
-    collection.delete(where=where)
+    db = SessionLocal()
+    try:
+        q = db.query(DocumentChunk).filter(DocumentChunk.source == filename)
+        if user_id is not None:
+            q = q.filter(DocumentChunk.user_id == user_id)
+        q.delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()

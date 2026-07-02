@@ -101,7 +101,6 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 @app.on_event("startup")
 def on_startup():
     import os
-    os.makedirs("data/documents", exist_ok=True)
     os.makedirs("data/avatars", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
     run_migrations()

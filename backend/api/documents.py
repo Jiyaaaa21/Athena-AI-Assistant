@@ -1,12 +1,13 @@
-import os
+import secrets
+import time
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 
 from backend.database.db import SessionLocal
 from backend.database.models import Document
 from backend.rag.vector_store import delete_by_source
-from backend.api.upload import user_documents_dir, _serialize as serialize
+from backend.api.upload import _serialize as serialize
 from backend.core.request_context import get_current_user_id
 
 router = APIRouter()
@@ -62,13 +63,16 @@ def get_document_file_by_token(token: str):
         ).first()
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
-        file_path = f"{user_documents_dir(doc.user_id)}/{doc.filename}"
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="File missing from disk")
-        return FileResponse(
-            file_path,
+        # Phase 25 fix: the PDF used to be read back from local disk
+        # (data/documents/...), which is wiped on every Render free-tier
+        # redeploy/restart/idle spin-down. The bytes now live directly on
+        # the Document row in Postgres, so they're served straight from
+        # there instead of the filesystem.
+        if not doc.file_data:
+            raise HTTPException(status_code=404, detail="File data missing for this document")
+        return Response(
+            content=doc.file_data,
             media_type="application/pdf",
-            filename=doc.filename,
             headers={"Content-Disposition": f"inline; filename=\"{doc.filename}\""},
         )
     finally:
@@ -106,22 +110,19 @@ def get_document_file(document_id: str):
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
 
-        file_path = f"{user_documents_dir(document.user_id)}/{document.filename}"
-
-        if not os.path.exists(file_path):
+        if not document.file_data:
             raise HTTPException(
                 status_code=404,
-                detail="The file is missing from disk.",
+                detail="The file is missing — try re-uploading this document.",
             )
 
-        return FileResponse(
-            file_path,
+        return Response(
+            content=document.file_data,
             media_type="application/pdf",
-            filename=document.filename,
             # Phase 9 fix: "attachment" (the default when filename is set)
             # tells the browser to download the file -- the iframe just
             # rendered blank. "inline" lets the browser's PDF viewer show it.
-            content_disposition_type="inline",
+            headers={"Content-Disposition": f"inline; filename=\"{document.filename}\""},
         )
 
     except ValueError:
@@ -143,10 +144,6 @@ def delete_document(document_id: str):
 
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
-
-        file_path = f"{user_documents_dir(document.user_id)}/{document.filename}"
-        if os.path.exists(file_path):
-            os.remove(file_path)
 
         try:
             delete_by_source(document.filename, user_id=document.user_id)
