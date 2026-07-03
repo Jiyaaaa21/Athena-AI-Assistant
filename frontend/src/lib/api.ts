@@ -256,6 +256,15 @@ export function chatStream(
         headers: {
           "Content-Type": "application/json",
           "X-Stream-Id": streamId,
+          // Phase 34 fix: syncTimezoneToBackend() (see below) is
+          // fire-and-forget and can land after a reminder has already
+          // been created via chat, permanently baking in the wrong
+          // (UTC-fallback) time. Sending the browser's current IANA
+          // timezone fresh on the actual request that might create a
+          // reminder closes that race entirely -- see
+          // request_context.set_current_request_timezone()'s docstring
+          // on the backend for the full reasoning.
+          "X-Timezone": Intl.DateTimeFormat().resolvedOptions().timeZone,
           ...(getAccessToken() ? { Authorization: `Bearer ${getAccessToken()}` } : {}),
         },
         body: JSON.stringify({

@@ -526,6 +526,35 @@ function ChatHome() {
     setVoiceOpen(true);
   }, [wakeEventId]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Phase 33 fix ("can't scroll while Athena is responding"): the old
+  // version of the effect below depended on [messages, streaming] and
+  // force-scrolled to the bottom with an ANIMATED "smooth" scroll on
+  // every dependency change -- and during streaming, `messages` gets a
+  // brand-new array reference on every single token (~55/sec, same
+  // throttle cadence as the voice-mode fix). That's ~55 forced,
+  // animated scroll-to-bottom calls per second, stacking new scroll
+  // animations before previous ones finished -- which is why manually
+  // scrolling away felt like it "didn't happen": the page really was
+  // overriding scroll position dozens of times a second, not just
+  // lagging. Fix is the standard chat-UI pattern (same idea ChatGPT/
+  // Slack/Discord use): only auto-scroll when the user is already near
+  // the bottom, track that via a real scroll listener rather than
+  // re-deriving it from render state, and use instant (non-animated)
+  // scrolling during active streaming so rapid updates don't pile up
+  // competing smooth-scroll animations.
+  const stickToBottomRef = useRef(true);
+  const prevMessageCountRef = useRef(messages.length);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const handleScroll = () => {
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      stickToBottomRef.current = distanceFromBottom < 120;
+    };
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, []);
 
   useEffect(() => {
     if (!hydrated && !hydrating) hydrate();
@@ -534,7 +563,19 @@ function ChatHome() {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+
+    // A brand-new message (not just a content update on the existing
+    // streaming one) means either the user just sent something, or a
+    // new assistant reply started -- both are moments a real chat app
+    // snaps back to the bottom regardless of prior scroll position,
+    // same as every other chat UI's send behavior.
+    const isNewMessage = messages.length !== prevMessageCountRef.current;
+    prevMessageCountRef.current = messages.length;
+    if (isNewMessage) stickToBottomRef.current = true;
+
+    if (!stickToBottomRef.current) return; // respect the user having scrolled away
+
+    el.scrollTo({ top: el.scrollHeight, behavior: streaming ? "auto" : "smooth" });
   }, [messages, streaming]);
 
   // ── Voice message handler ──────────────────────────────────────────────────

@@ -23,7 +23,7 @@ import io
 from datetime import datetime, timezone
 
 from backend.agents.base import BaseAgent, AgentResult
-from backend.core.llm import ask_llm_raw
+from backend.core.llm import ask_llm_raw, _BOTH_PROVIDERS_FAILED_MESSAGE
 from backend.core.logger import agent_logger
 from backend.core.rate_limit import upload_rate_limiter_minute, upload_rate_limiter_daily, require_budget
 from backend.core.request_context import get_current_user_id
@@ -94,16 +94,36 @@ class DocumentAgent(BaseAgent):
         user_id = get_current_user_id()
 
         content = self._generate_content(query)
-        if not content:
+
+        # Phase 34 fix: ask_llm_raw() deliberately does NOT raise when
+        # both Groq and Gemini are unavailable -- it returns
+        # _BOTH_PROVIDERS_FAILED_MESSAGE as a clean, displayable string
+        # (see core/llm.py's _complete()), so a plain chat response can
+        # show it directly. DocumentAgent was treating that string as
+        # genuine content: writing it into a real PDF, and (worse)
+        # deriving the filename FROM it -- since the failure message is
+        # always identical text, every failed attempt produced the exact
+        # same filename, so the second failure crashed with a duplicate-
+        # key database error instead of the same clean failure message
+        # a normal chat response would have shown. Caught here, before
+        # any title/PDF/DB work happens at all.
+        if not content or content.strip() == _BOTH_PROVIDERS_FAILED_MESSAGE:
             return AgentResult(
-                answer="I couldn't come up with content for that document — could you be more specific about what you'd like in it?",
+                answer="I couldn't write that document just now — the AI service is temporarily unavailable. Please try again in a moment.",
                 agent_name=self.name,
                 steps=steps,
-                confidence=30,
+                confidence=20,
             )
 
         steps.append("Choosing a title…")
         title = self._generate_title(query, content)
+        # Same failure class can independently hit the title call even
+        # when content generation succeeded (e.g. the outage started
+        # between the two calls) -- fall back to a safe, always-valid
+        # title rather than risk the same garbage-filename problem from
+        # a second, separate LLM call.
+        if not title or title.strip() == _BOTH_PROVIDERS_FAILED_MESSAGE:
+            title = "Generated Document"
 
         steps.append("Rendering PDF…")
         try:
@@ -117,11 +137,28 @@ class DocumentAgent(BaseAgent):
                 confidence=40,
             )
 
-        filename = f"{title.strip().replace(' ', '_')[:60] or 'document'}.pdf"
+        base_filename = title.strip().replace(" ", "_")[:60] or "document"
         content_hash = hashlib.sha256(pdf_bytes).hexdigest()
 
         db = SessionLocal()
         try:
+            # Phase 34 fix (defense in depth, independent of the failure-
+            # message fix above): titles are LLM-generated free text, so
+            # a genuine coincidental collision with an earlier document's
+            # filename was always possible, not just from this one bug.
+            # Rather than let a UniqueViolation crash the whole request,
+            # disambiguate up front -- same filename-uniqueness contract
+            # as api/upload.py, just resolved automatically instead of
+            # rejecting the request outright (a generated document has no
+            # "existing file to update" concept the way a re-upload does).
+            filename = f"{base_filename}.pdf"
+            suffix = 2
+            while db.query(Document).filter(
+                Document.user_id == user_id, Document.filename == filename
+            ).first() is not None:
+                filename = f"{base_filename}_{suffix}.pdf"
+                suffix += 1
+
             document = Document(
                 filename=filename,
                 size_bytes=len(pdf_bytes),

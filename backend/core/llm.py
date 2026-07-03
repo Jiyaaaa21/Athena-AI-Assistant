@@ -43,6 +43,7 @@ client = Groq(api_key=GROQ_API_KEY)
 # failed. If GEMINI_API_KEY isn't set, the app behaves exactly as before
 # (Groq failures surface as errors) -- the fallback is purely additive.
 import json
+import time
 import requests
 
 _GEMINI_MODEL = "gemini-2.0-flash"
@@ -434,6 +435,8 @@ BEHAVIOR RULES:
    - Use a table only when comparing multiple items across multiple attributes — never as a substitute for a normal sentence.
    - If the user's request is genuinely ambiguous in a way that would waste effort to guess wrong, ask ONE focused clarifying question rather than several — otherwise, make a reasonable assumption, state it briefly, and answer.
 11. DON'T MIRROR THE CONTEXT BLOCK'S FORMATTING: Any "ATHENA CONTEXT" block appended below (goals, reminders, notes, etc.) is formatted as headers and bullets purely for YOUR reference — it has nothing to do with how you should format your reply. Seeing a bulleted list in your context is not a cue to answer in bullets. Your response format is decided entirely by rule 6 above, based on what the user actually asked.
+12. GROUND CLAIMS ABOUT THE USER IN ACTUAL CONTEXT: Only state something as fact about the user (their goals, reminders, past statements, preferences) if it actually appears in the ATHENA CONTEXT block or the conversation history below — never invent or assume a personal detail to sound more personalized. If the context block doesn't mention something you'd need to answer confidently, say you don't have that information rather than guessing at what it might be. The context block reflects the user's data as of moments ago, not necessarily this exact second — if a just-mentioned change (a reminder they asked you to set one message ago) seems to be missing, don't insist it doesn't exist; acknowledge the gap plainly.
+13. HIGHER CARE ON HIGH-STAKES TOPICS: For medical, legal, financial, or safety-related questions with real consequences if wrong, be more conservative about stating things as settled fact, and note when something genuinely warrants a professional rather than just an AI's answer — but keep this proportionate (rule 7 still applies: don't stack disclaimers onto low-stakes questions that merely mention a related word). A drug interaction question warrants real caution; "what's a good stretch for a sore back" doesn't need a medical disclaimer.
 
 EXAMPLES (calibrate to these, don't copy the wording — these show the LENGTH and TONE to match, not a template to fill in):
 
@@ -462,27 +465,67 @@ CAPABILITIES (route automatically, do not ask the user which to use):
 Remember: You are a Personal AI Operating System, not just a Q&A bot. Make the user feel like you know them."""
 
 # ── Phase 15: Request-scoped context cache ────────────────────────────────────
-# Stores (context_block, user_id) so we rebuild only when user changes.
+# Stores (context_block, built_at, user_id) so we rebuild only when user
+# changes -- or the entry has aged out (see CONTEXT_CACHE_TTL_SECONDS).
 _ctx_cache: dict = {}
+
+# Phase 34 fix: this cache was previously invalidated ONLY by an explicit
+# call to invalidate_context_cache() -- and that turned out to be called
+# from exactly one place in the entire codebase (api/assistant.py's smart-
+# action endpoint), not from any of the actual reminder/note/goal creation
+# tools used in normal chat. Net effect: a user could ask Athena to "remind
+# me to call mom at 5pm", then immediately ask "what are my reminders", and
+# get an answer built from a context block cached from BEFORE that
+# reminder existed -- the definition of not being context-aware, and it
+# could persist for the lifetime of the process (up to the crude 50-entry
+# LRU eviction below), not just a few seconds.
+#
+# Rather than hunting down and instrumenting every current and future
+# write path with an explicit invalidate call (fragile -- this is
+# precisely the class of bug that already slipped through once), this
+# cache now self-heals on a short TTL. A handful of the most common write
+# paths (reminders) also call invalidate_context_cache() directly for
+# instant correctness in the most common "create then immediately ask"
+# case, but the TTL is the real fix -- it bounds staleness for every path,
+# including ones nobody remembered to wire up explicitly.
+CONTEXT_CACHE_TTL_SECONDS = 45
+
+
+def _cache_get(key: str) -> str | None:
+    entry = _ctx_cache.get(key)
+    if entry is None:
+        return None
+    context_str, built_at = entry
+    if time.monotonic() - built_at > CONTEXT_CACHE_TTL_SECONDS:
+        del _ctx_cache[key]
+        return None
+    return context_str
+
+
+def _cache_set(key: str, context_str: str) -> None:
+    _ctx_cache[key] = (context_str, time.monotonic())
+    if len(_ctx_cache) > 50:
+        oldest_key = min(_ctx_cache, key=lambda k: _ctx_cache[k][1])
+        del _ctx_cache[oldest_key]
 
 
 def _build_context_system_prompt() -> str:
-    """Build SYSTEM_PROMPT with live user context injected (cached per request)."""
+    """Build SYSTEM_PROMPT with live user context injected (cached per request,
+    with a short TTL -- see CONTEXT_CACHE_TTL_SECONDS above)."""
     try:
         from backend.core.context_builder import build_user_context, format_context_for_prompt
         from backend.core.memory_intelligence import get_user_facts_prompt
         from backend.core.request_context import get_current_user_id
         uid = get_current_user_id()
         key = f"ctx_{uid}"
-        if key not in _ctx_cache:
+        cached = _cache_get(key)
+        if cached is None:
             ctx = build_user_context()
             context_block = format_context_for_prompt(ctx)
             facts_block = get_user_facts_prompt(uid) if uid else ""
-            _ctx_cache[key] = context_block + facts_block
-            if len(_ctx_cache) > 50:
-                oldest = next(iter(_ctx_cache))
-                del _ctx_cache[oldest]
-        return SYSTEM_PROMPT + _ctx_cache[key]
+            cached = context_block + facts_block
+            _cache_set(key, cached)
+        return SYSTEM_PROMPT + cached
     except Exception:
         return SYSTEM_PROMPT
 

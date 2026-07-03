@@ -7,7 +7,7 @@ import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Copy, RotateCcw, Check, Square, Brain, Bell, StickyNote, FileSearch, Globe, Cpu, Zap } from "lucide-react";
-import { useState } from "react";
+import { useState, memo } from "react";
 import { format, isToday } from "date-fns";
 import { AthenaLogo } from "./logo";
 import { CitationCard } from "./citation-card";
@@ -61,7 +61,7 @@ export function StreamingCursor() {
 }
 
 // ── Message component ─────────────────────────────────────────────────────────
-export function Message({
+export const Message = memo(function Message({
   message,
   onRegenerate,
   isLast,
@@ -193,7 +193,7 @@ export function Message({
       )}
     </motion.div>
   );
-}
+});
 
 // ── Thinking indicator ────────────────────────────────────────────────────────
 export function ThinkingIndicator({ statusText }: { statusText?: string }) {
@@ -210,3 +210,4 @@ export function ThinkingIndicator({ statusText }: { statusText?: string }) {
     </motion.div>
   );
 }
+

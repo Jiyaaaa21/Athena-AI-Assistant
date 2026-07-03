@@ -499,6 +499,14 @@ async def chat_stream(payload: StreamRequest, request: Request):
     cancel_event = asyncio.Event()
     _cancel_events[stream_id] = cancel_event
 
+    # Phase 34 fix: see request_context.set_current_request_timezone()'s
+    # docstring for the full reasoning -- closes the "reminder created
+    # in UTC because the fire-and-forget timezone sync hadn't landed
+    # yet" race by having the browser send its current timezone on the
+    # request that actually matters, instead of depending on timing.
+    from backend.core.request_context import set_current_request_timezone
+    set_current_request_timezone(request.headers.get("X-Timezone") or None)
+
     return StreamingResponse(
         _stream_generator(payload.message, payload.conv_id, stream_id, payload.image_data_uri),
         media_type="text/event-stream",

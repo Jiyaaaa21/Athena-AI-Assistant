@@ -41,6 +41,13 @@ _current_user_id: "contextvars.ContextVar[Optional[int]]" = contextvars.ContextV
     "current_user_id", default=None
 )
 
+# Phase 34 addition: see set_current_request_timezone()'s docstring below
+# for why this exists alongside the separately-persisted timezone
+# preference (core/preferences.py) rather than replacing it.
+_current_request_timezone: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar(
+    "current_request_timezone", default=None
+)
+
 
 def set_current_user_id(user_id: Optional[int]) -> None:
     _current_user_id.set(user_id)
@@ -53,6 +60,41 @@ def get_current_user_id() -> Optional[int]:
     dependency has run.
     """
     return _current_user_id.get()
+
+
+def set_current_request_timezone(tz_name: Optional[str]) -> None:
+    """
+    Phase 34 fix: reminder times were occasionally created in UTC for
+    users whose browser-detected timezone (Asia/Kolkata, etc.) had been
+    correctly synced to their UserPreference row -- but not yet, at the
+    exact moment a reminder got created. That sync
+    (lib/api.ts's syncTimezoneToBackend()) is fire-and-forget and does
+    two sequential network round-trips; a reminder created via chat
+    within that window (very plausible right after login, especially
+    after a Render free-tier cold start) landed before the sync did,
+    and agents/reminder_agent.py's _get_user_timezone() correctly-but-
+    unhelpfully fell back to UTC, permanently baking in the wrong time.
+
+    Rather than try to make the sync land faster or block on it (which
+    only narrows the race, doesn't close it), the frontend now sends its
+    current IANA timezone on the request that actually matters (see
+    api/chat.py's chat_stream, reading the X-Timezone header) --
+    computed fresh at send time, not dependent on any prior sync having
+    completed. This has no race condition to lose: the browser tells the
+    backend its own timezone on the very request that needs it.
+
+    The separately-persisted preference isn't redundant, though -- it's
+    still what background jobs without a live request use (e.g.
+    core/proactive_engine.py deciding whether it's a reasonable local
+    hour to surface an insight). _get_user_timezone() checks this
+    per-request value first and falls back to the stored preference,
+    which this also opportunistically keeps in sync (see reminder_agent.py).
+    """
+    _current_request_timezone.set(tz_name)
+
+
+def get_current_request_timezone() -> Optional[str]:
+    return _current_request_timezone.get()
 
 
 def require_current_user_id() -> int:
