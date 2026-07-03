@@ -58,6 +58,7 @@ def serialize_user(user: User) -> UserOut:
         avatar_url=f"/profile/avatar/{user.id}" if user.avatar_path else None,
         is_active=user.is_active,
         is_verified=user.is_verified,
+        is_admin=user.is_admin,
         created_at=user.created_at,
     )
 

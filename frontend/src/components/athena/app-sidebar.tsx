@@ -10,7 +10,7 @@ import { ConversationManager } from "./conversation-manager";
 import { AgentPanel } from "./agent-panel";
 import {
   MessageSquare, FileText, StickyNote, Bell, Newspaper, CloudSun,
-  BarChart3, Brain, Settings, Plus, PanelLeftClose, PanelLeft, Search, LogOut,
+  BarChart3, Brain, Settings, Plus, PanelLeftClose, PanelLeft, Search, LogOut, ShieldAlert,
   ChevronDown, ChevronRight, Cpu, Target, Zap,
 } from "lucide-react";
 import { useState } from "react";
@@ -332,6 +332,22 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
 
       {/* ── Footer: Settings + User ── */}
       <div className="px-3 pb-4 pt-2 border-t border-border/60 shrink-0">
+        {user?.is_admin && (
+          <Link
+            to="/admin"
+            className={cn(
+              "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
+              pathname === "/admin"
+                ? "athena-nav-active"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              collapsed && "justify-center",
+            )}
+            title={collapsed ? "Admin" : undefined}
+          >
+            <ShieldAlert className="size-4 shrink-0" />
+            {!collapsed && "Admin"}
+          </Link>
+        )}
         <Link
           to="/settings"
           className={cn(

@@ -51,6 +51,15 @@ class User(Base):
  
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
+    # Phase 31 addition: previously there was no admin/role concept at
+    # all -- admin.py's one route (/clear-memory) was actually a
+    # per-user self-service action (scoped to the calling user), not a
+    # real admin action, and there was no way to list users, deactivate
+    # one, force-revoke their sessions, or see any usage overview
+    # without reaching directly into the database. See ADMIN_EMAILS in
+    # core/config.py for how the first admin gets promoted (no manual
+    # SQL needed).
+    is_admin = Column(Boolean, default=False, nullable=False)
  
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
@@ -725,3 +734,28 @@ class ProactiveInsight(Base):
     delivered   = Column(Boolean, nullable=False, default=False)  # push actually sent
     dismissed   = Column(Boolean, nullable=False, default=False)
     created_at  = Column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 31: Admin surface
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AdminAuditLog(Base):
+    """
+    One row per admin action taken through api/admin.py -- who did what,
+    to which user, and when. Deliberately NOT scoped with ondelete=CASCADE
+    on admin_user_id: if an admin account is later deleted, the historical
+    record of what they did should still exist (set null, not vanish) --
+    an audit log that disappears when its author's account does isn't
+    much of an audit log.
+    """
+    __tablename__ = "admin_audit_log"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    admin_user_id  = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    admin_email    = Column(String, nullable=True)  # denormalized snapshot -- survives even if the admin row is later deleted
+    action         = Column(String, nullable=False)  # e.g. "deactivate_user", "reactivate_user", "revoke_sessions"
+    target_user_id = Column(Integer, nullable=True, index=True)  # not a FK -- same "must survive target deletion" reasoning
+    target_email   = Column(String, nullable=True)
+    detail         = Column(Text, nullable=True)
+    created_at     = Column(DateTime(timezone=True), default=utcnow, index=True)

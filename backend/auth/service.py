@@ -81,12 +81,17 @@ def create_user(db: Session, name: str, email: str, password: str) -> User:
             detail="An account with this email already exists.",
         )
 
+    from backend.core.config import ADMIN_EMAILS
+
     user = User(
         name=name.strip(),
         email=email,
         password_hash=hash_password(password),
         is_active=True,
         is_verified=False,
+        # Phase 31: auto-promote if this email is in ADMIN_EMAILS -- see
+        # core/config.py for why this is the only way to become an admin.
+        is_admin=email in ADMIN_EMAILS,
     )
     db.add(user)
     db.commit()

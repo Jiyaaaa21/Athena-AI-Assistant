@@ -94,6 +94,22 @@ FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
 # Without these set, the calendar feature simply stays disabled (the
 # "Connect Google Calendar" button in Settings shows a setup notice
 # instead of erroring) — nothing else breaks.
+# Phase 31 addition: comma-separated list of emails that get is_admin=True
+# automatically -- checked at signup and on every authenticated request
+# (see auth/service.py's create_user, and auth/dependencies.py's
+# get_current_user). This is the only way to become an admin; there's no
+# UI to grant it (an admin granting other admins is a real feature this
+# app doesn't need yet -- the actual owner listing their own email here
+# is enough for a personal-assistant deployment). Only ever promotes,
+# never demotes -- removing an email from this list does not revoke
+# existing admin status, so a temporary env var misconfiguration can't
+# accidentally lock out whoever's actively working.
+ADMIN_EMAILS = {
+    e.strip().lower()
+    for e in os.getenv("ADMIN_EMAILS", "").split(",")
+    if e.strip()
+}
+
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_OAUTH_REDIRECT_URI = os.getenv(

@@ -407,6 +407,75 @@ export const remindersApi = {
       : delay({ ok: true as const }),
 };
 
+// ── Phase 31: Admin ───────────────────────────────────────────────────────────
+
+export type AdminUserSummary = {
+  id: number;
+  name: string;
+  email: string;
+  is_active: boolean;
+  is_admin: boolean;
+  is_verified: boolean;
+  created_at: string | null;
+  counts: {
+    notes: number;
+    reminders: number;
+    goals: number;
+    projects: number;
+    documents: number;
+    conversations: number;
+    timers: number;
+    routines: number;
+  };
+  google_calendar_connected: boolean;
+  usage_today: {
+    chat_remaining: number;
+    voice_remaining: number;
+    uploads_remaining: number;
+  };
+};
+
+export type AdminAuditEntry = {
+  id: number;
+  admin_email: string | null;
+  action: string;
+  target_email: string | null;
+  detail: string | null;
+  created_at: string | null;
+};
+
+export type AdminOverview = {
+  total_users: number;
+  active_users: number;
+  deactivated_users: number;
+  admin_users: number;
+  google_calendar_connections: number;
+  totals: {
+    notes: number;
+    reminders: number;
+    goals: number;
+    documents: number;
+    conversations: number;
+  };
+};
+
+export const adminApi = {
+  listUsers: async () =>
+    request<{ users: AdminUserSummary[]; total: number }>("/admin/users"),
+  getUser: async (userId: number) =>
+    request<AdminUserSummary>(`/admin/users/${userId}`),
+  deactivate: async (userId: number) =>
+    request<{ ok: true; message: string }>(`/admin/users/${userId}/deactivate`, { method: "POST" }),
+  reactivate: async (userId: number) =>
+    request<{ ok: true; message: string }>(`/admin/users/${userId}/reactivate`, { method: "POST" }),
+  revokeSessions: async (userId: number) =>
+    request<{ ok: true; message: string }>(`/admin/users/${userId}/revoke-sessions`, { method: "POST" }),
+  auditLog: async (limit = 100) =>
+    request<{ entries: AdminAuditEntry[] }>(`/admin/audit-log?limit=${limit}`),
+  overview: async () =>
+    request<AdminOverview>("/admin/overview"),
+};
+
 /* ---------- News / Weather ---------- */
 export const newsApi = {
   list: async (category?: string) =>

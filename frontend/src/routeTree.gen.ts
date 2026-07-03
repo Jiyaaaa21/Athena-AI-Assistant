@@ -23,6 +23,7 @@ import { Route as GoalsRouteImport } from './routes/goals'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as DocumentsRouteImport } from './routes/documents'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
+import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 
 const WeatherRoute = WeatherRouteImport.update({
@@ -95,6 +96,11 @@ const AnalyticsRoute = AnalyticsRouteImport.update({
   path: '/analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -103,6 +109,7 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
   '/documents': typeof DocumentsRoute
   '/forgot-password': typeof ForgotPasswordRoute
@@ -120,6 +127,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
   '/documents': typeof DocumentsRoute
   '/forgot-password': typeof ForgotPasswordRoute
@@ -138,6 +146,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
   '/documents': typeof DocumentsRoute
   '/forgot-password': typeof ForgotPasswordRoute
@@ -157,6 +166,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/admin'
     | '/analytics'
     | '/documents'
     | '/forgot-password'
@@ -174,6 +184,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/admin'
     | '/analytics'
     | '/documents'
     | '/forgot-password'
@@ -191,6 +202,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/admin'
     | '/analytics'
     | '/documents'
     | '/forgot-password'
@@ -209,6 +221,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminRoute: typeof AdminRoute
   AnalyticsRoute: typeof AnalyticsRoute
   DocumentsRoute: typeof DocumentsRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
@@ -325,6 +338,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -337,6 +357,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRoute: AdminRoute,
   AnalyticsRoute: AnalyticsRoute,
   DocumentsRoute: DocumentsRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,

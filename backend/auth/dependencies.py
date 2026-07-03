@@ -106,8 +106,37 @@ async def get_current_user(
             detail="This account has been deactivated.",
         )
 
+    # Phase 31: covers the case where an email is added to ADMIN_EMAILS
+    # *after* that user already has an account -- promotion happens on
+    # their next authenticated request rather than requiring a fresh
+    # signup. Only ever promotes, never demotes (see core/config.py).
+    if not user.is_admin:
+        from backend.core.config import ADMIN_EMAILS
+        if user.email in ADMIN_EMAILS:
+            user.is_admin = True
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+
     set_current_user_id(user.id)
     return user
+
+
+async def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """
+    Phase 31: gate for genuine admin-only endpoints (api/admin.py's user
+    list, deactivate/reactivate, revoke-sessions, usage overview).
+    Requires a valid JWT (via get_current_user) AND is_admin=True -- a
+    403 either way, so an authenticated-but-non-admin caller can't tell
+    the difference between "endpoint doesn't exist" and "you're not
+    allowed", which is the right amount of information to leak here.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required.",
+        )
+    return current_user
 
 
 async def get_current_user_optional(

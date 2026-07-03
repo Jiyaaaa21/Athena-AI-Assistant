@@ -40,6 +40,10 @@ os.environ.setdefault("GROQ_API_KEY", "gsk_test_dummy_key_for_imports_only")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-not-for-production-use")
 os.environ.setdefault("PROACTIVE_ENABLED", "false")
 os.environ.setdefault("ALLOWED_ORIGINS", "*")
+# Phase 31: fixed test admin email -- test_admin.py signs up a user with
+# exactly this address to get auto-promoted to is_admin=True (see
+# core/config.py's ADMIN_EMAILS and auth/service.py's create_user).
+os.environ.setdefault("ADMIN_EMAILS", "admin@test.example.com")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -138,3 +142,27 @@ def test_user(client):
 def auth_headers(test_user):
     return {"Authorization": f"Bearer {test_user['access_token']}"}
 
+
+@pytest.fixture
+def admin_user(client):
+    """Signs up with the exact email in the test ADMIN_EMAILS value
+    (set above), so create_user() auto-promotes it to is_admin=True."""
+    email = "admin@test.example.com"
+    password = "admin-correct-horse-battery"
+    resp = client.post("/auth/signup", json={
+        "name": "Admin User", "email": email, "password": password,
+    })
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["user"]["is_admin"] is True, "signup did not auto-promote the ADMIN_EMAILS address"
+    return {
+        "email": email,
+        "password": password,
+        "user_id": body["user"]["id"],
+        "access_token": body["tokens"]["access_token"],
+    }
+
+
+@pytest.fixture
+def admin_headers(admin_user):
+    return {"Authorization": f"Bearer {admin_user['access_token']}"}
