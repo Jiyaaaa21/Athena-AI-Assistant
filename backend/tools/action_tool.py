@@ -31,6 +31,7 @@ from backend.core.config import (
     ACTION_WEBHOOK_TIMEOUT_SECONDS,
 )
 from backend.core.logger import agent_logger, error_logger
+from backend.core.rate_limit import action_rate_limiter_minute, action_rate_limiter_daily, require_budget
 from backend.core.request_context import get_current_user_id
 from backend.database.db import SessionLocal
 from backend.database.models import UserAction
@@ -118,6 +119,20 @@ class ActionTool:
             db.close()
 
     def _trigger(self, db, action: UserAction, extra_json: str) -> str:
+        # Phase 32: checked here rather than duplicated in both callers
+        # (api/actions.py's /test endpoint and this class's own run()
+        # for the chat-triggered "run:" path) -- both funnel through this
+        # one method, so this is the single place that actually needs it.
+        try:
+            require_budget(
+                action_rate_limiter_minute, action_rate_limiter_daily,
+                str(action.user_id),
+                minute_detail="Too many action triggers in a short time -- please wait a moment.",
+                daily_detail="Today's connected-action trigger limit has been reached.",
+            )
+        except Exception as e:
+            return f"'{action.name}' was not triggered: {e}"
+
         parsed = urlparse(action.webhook_url)
         if parsed.scheme not in ("http", "https"):
             return f"'{action.name}' has an invalid webhook URL."

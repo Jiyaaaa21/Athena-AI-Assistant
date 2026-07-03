@@ -173,3 +173,12 @@ search_rate_limiter_daily = RateLimiter(max_calls=300, window_seconds=86400, nam
 # ── Auth: protects against brute-forcing, keyed by IP since there's no
 # authenticated user yet at this point ────────────────────────────────────────
 auth_rate_limiter = RateLimiter(max_calls=10, window_seconds=60, name="auth_per_minute")
+
+# ── Connected actions: protects third-party webhooks from being spammed ──────
+#
+# Unlike the limiters above, this isn't primarily about Athena's own
+# resources -- every trigger is an outbound request to a URL the USER
+# registered (their own Slack, Home Assistant, IFTTT, etc.), so a
+# runaway loop here is abusive to that third party, not just wasteful.
+action_rate_limiter_minute = RateLimiter(max_calls=10, window_seconds=60, name="action_per_minute")
+action_rate_limiter_daily = RateLimiter(max_calls=100, window_seconds=86400, name="action_per_day")

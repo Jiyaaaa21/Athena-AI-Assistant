@@ -30,6 +30,14 @@ from backend.api.routines import router as routines_router
 from backend.api.calendar import router as calendar_router, public_router as calendar_public_router
 from backend.api.push import router as push_router, public_router as push_public_router
 from backend.api.goals import router as goals_router
+# Phase 32 fix: this router existed fully built (CRUD for connected-action
+# webhooks, matching UserAction/ActionAgent/ActionTool, which WERE already
+# wired up elsewhere) but was never actually imported/mounted here despite
+# its own docstring claiming it was. Net effect before this fix: a user
+# could theoretically ask Athena via chat to "run my lights-on action",
+# but had no way to ever create one in the first place -- the only door
+# in (this router) didn't exist as far as the running app was concerned.
+from backend.api.actions import router as actions_router
 from backend.api.projects import router as projects_router
 from backend.api.briefing import router as briefing_router
 from backend.api.assistant import router as assistant_router
@@ -172,6 +180,7 @@ app.include_router(conversations_router, dependencies=_auth_required)
 app.include_router(voice_router, dependencies=_auth_required)
 # Phase 14 additions: Assistant Transformation
 app.include_router(goals_router, dependencies=_auth_required)
+app.include_router(actions_router, dependencies=_auth_required)
 app.include_router(projects_router, dependencies=_auth_required)
 app.include_router(briefing_router, dependencies=_auth_required)
 app.include_router(assistant_router, dependencies=_auth_required)
