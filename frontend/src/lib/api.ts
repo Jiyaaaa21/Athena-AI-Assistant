@@ -253,8 +253,15 @@ export function chatStream(
       });
 
       if (!res.ok) {
-        const err = await res.text();
-        callbacks.onError?.(err || "Stream request failed");
+        const errBody = await res.text();
+        let cleanMessage = errBody;
+        try {
+          const parsed = JSON.parse(errBody);
+          if (typeof parsed?.detail === "string") cleanMessage = parsed.detail;
+        } catch {
+          // Not JSON — show the raw text as-is (e.g. a plain-text 500 page).
+        }
+        callbacks.onError?.(cleanMessage || "Stream request failed");
         return;
       }
 

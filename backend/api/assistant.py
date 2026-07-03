@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from backend.core.llm import ask_llm_raw
+from backend.core.rate_limit import chat_rate_limiter_minute, chat_rate_limiter_daily, require_budget
 from backend.core.request_context import get_current_user_id
 from backend.database.db import SessionLocal
 from backend.database.models import Note, Reminder, Goal
@@ -75,6 +76,17 @@ def smart_action(payload: ActionRequest):
     Returns what was done + a friendly reply for the chat interface.
     """
     uid = get_current_user_id()
+
+    # Phase 29: _classify_action() below calls ask_llm_raw() on every
+    # request -- shares the same budget as /chat/stream since it draws on
+    # the same underlying keys.
+    require_budget(
+        chat_rate_limiter_minute, chat_rate_limiter_daily,
+        str(uid) if uid is not None else "unknown",
+        minute_detail="You're sending requests faster than Athena can keep up — please slow down for a moment.",
+        daily_detail="You've hit today's usage limit for this shared deployment. It resets in 24 hours.",
+    )
+
     classified = _classify_action(payload.message, payload.context)
     action = classified.get("action", "chat")
     params = classified.get("params", {})

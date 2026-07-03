@@ -13,10 +13,11 @@ Phase 11 — Authentication API
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from backend.core.config import EMAIL_PROVIDER
+from backend.core.rate_limit import auth_rate_limiter
 from backend.auth.dependencies import get_db
 from backend.auth.schemas import (
     SignupRequest,
@@ -37,6 +38,12 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/signup", response_model=AuthResponse, status_code=201)
 def signup(payload: SignupRequest, request: Request, db: Session = Depends(get_db)):
+    # Phase 29: previously unlimited -- a script could create accounts as
+    # fast as the server could process them.
+    auth_rate_limiter.check_or_raise(
+        request.client.host if request.client else "unknown",
+        detail="Too many signup attempts. Please wait a minute and try again.",
+    )
     user = service.create_user(db, payload.name, payload.email, payload.password)
     tokens = service.issue_token_pair(
         db,
@@ -49,6 +56,11 @@ def signup(payload: SignupRequest, request: Request, db: Session = Depends(get_d
 
 @router.post("/login", response_model=AuthResponse)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    # Phase 29: previously unlimited -- straightforwardly brute-forceable.
+    auth_rate_limiter.check_or_raise(
+        request.client.host if request.client else "unknown",
+        detail="Too many login attempts. Please wait a minute and try again.",
+    )
     user = service.authenticate_user(db, payload.email, payload.password)
     tokens = service.issue_token_pair(
         db,
@@ -76,7 +88,14 @@ def logout(payload: LogoutRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/forgot-password")
-def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    # Phase 29: previously unlimited -- could be used to spam reset emails
+    # at an address, or (more subtly) to enumerate which emails have
+    # accounts by timing/behavior differences at high volume.
+    auth_rate_limiter.check_or_raise(
+        request.client.host if request.client else "unknown",
+        detail="Too many requests. Please wait a minute and try again.",
+    )
     raw_token = service.request_password_reset(db, payload.email)
 
     response: dict = {
@@ -98,6 +117,13 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
 
 
 @router.post("/reset-password")
-def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+def reset_password(payload: ResetPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    # Phase 29: previously unlimited -- the reset token is the only thing
+    # standing between an attacker and taking over an account here, so
+    # this endpoint being brute-forceable was a real gap.
+    auth_rate_limiter.check_or_raise(
+        request.client.host if request.client else "unknown",
+        detail="Too many attempts. Please wait a minute and try again.",
+    )
     service.reset_password(db, payload.token, payload.new_password)
     return {"ok": True, "message": "Password updated. Please log in again."}

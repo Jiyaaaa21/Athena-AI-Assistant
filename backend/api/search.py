@@ -35,6 +35,7 @@ from fastapi import APIRouter, Query
 from backend.database.db import SessionLocal
 from backend.database.models import Document, Message, Note, Reminder
 from backend.core.request_context import get_current_user_id
+from backend.core.rate_limit import search_rate_limiter_minute, search_rate_limiter_daily, require_budget
 from backend.rag.embedder import create_query_embedding
 from backend.rag.vector_store import search_chunks
 
@@ -359,6 +360,20 @@ def global_search(
 
     user_id = get_current_user_id()
 
+    # Phase 29: _search_documents() below calls create_query_embedding(),
+    # hitting the same shared HF embeddings budget as document upload and
+    # /search/document-chunks. Only check when "documents" is actually
+    # one of the requested sources -- a notes/reminders/memory-only
+    # search never touches that budget at all and shouldn't be throttled
+    # by it.
+    if "documents" in requested:
+        require_budget(
+            search_rate_limiter_minute, search_rate_limiter_daily,
+            str(user_id) if user_id is not None else "unknown",
+            minute_detail="Too many searches in a short time — please wait a moment.",
+            daily_detail="You've hit today's document search limit for this shared deployment. It resets in 24 hours.",
+        )
+
     tasks: dict[str, any] = {}
     workers = {
         "notes":     lambda: _search_notes(q, limit, user_id),
@@ -416,6 +431,19 @@ def document_chunks(
         ).first()
         if not doc:
             return {"chunks": [], "document": None}
+
+        # Phase 29: create_query_embedding() below hits the same Hugging
+        # Face embeddings API (HF_TOKEN) as document upload -- shares that
+        # budget rather than having its own, since it's the same
+        # underlying resource. Search is much easier to trigger
+        # repeatedly than uploading a file (e.g. a live-search-as-you-type
+        # UI), so it needed its own protection just as much.
+        require_budget(
+            search_rate_limiter_minute, search_rate_limiter_daily,
+            str(user_id) if user_id is not None else "unknown",
+            minute_detail="Too many searches in a short time — please wait a moment.",
+            daily_detail="You've hit today's document search limit for this shared deployment. It resets in 24 hours.",
+        )
 
         embedding = create_query_embedding(q)
         raw = search_chunks(embedding, top_k=top_k * 3, user_id=user_id)  # over-fetch then filter

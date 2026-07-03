@@ -24,6 +24,7 @@ from backend.database.models import (
 )
 from backend.core.request_context import get_current_user_id
 from backend.core.llm import ask_llm_raw
+from backend.core.rate_limit import chat_rate_limiter_minute, chat_rate_limiter_daily, require_budget
 
 router = APIRouter()
 
@@ -40,6 +41,19 @@ def get_briefing():
     Returns a structured daily briefing payload.
     The frontend uses this to render the assistant-first home screen.
     """
+    # Phase 29: this calls ask_llm_raw() on every single request -- no
+    # caching, no dedup per day -- and the UI has a one-click refresh
+    # button (RefreshCw icon on the home screen) with no cooldown of its
+    # own. Shares the same budget as /chat/stream since it draws on the
+    # same underlying keys.
+    uid_for_limit = get_current_user_id()
+    require_budget(
+        chat_rate_limiter_minute, chat_rate_limiter_daily,
+        str(uid_for_limit) if uid_for_limit is not None else "unknown",
+        minute_detail="Briefing was just refreshed — please wait a moment before refreshing again.",
+        daily_detail="You've hit today's usage limit for this shared deployment. It resets in 24 hours.",
+    )
+
     db = SessionLocal()
     try:
         uid = get_current_user_id()

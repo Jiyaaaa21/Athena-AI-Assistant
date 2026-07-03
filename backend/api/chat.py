@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from backend.agents.agent import process_query
 from backend.agents.orchestrator import route_and_stream, ALL_AGENTS
 from backend.core.memory_service import add_message
+from backend.core.rate_limit import chat_rate_limiter_minute, chat_rate_limiter_daily, require_budget
 from backend.core.request_context import get_current_user_id
 from backend.database.db import SessionLocal
 from backend.database.models import Conversation, ConversationMessage, AgentCallLog
@@ -90,6 +91,18 @@ def chat(
     user_message = message or question
     if not user_message:
         raise HTTPException(status_code=422, detail="message is required")
+
+    # Phase 29: this is a separate entry point from /chat/stream but ends
+    # up calling the exact same shared LLM budget via process_query() ->
+    # route_and_run() -- needs the same protection, not a second
+    # unguarded door into the same resource.
+    user_id = get_current_user_id()
+    rate_key = str(user_id) if user_id is not None else "unknown"
+    require_budget(
+        chat_rate_limiter_minute, chat_rate_limiter_daily, rate_key,
+        minute_detail="You're sending messages faster than Athena can keep up — please slow down for a moment.",
+        daily_detail="You've hit today's message limit for this shared deployment. It resets in 24 hours.",
+    )
 
     try:
         answer, sources = process_query(user_message)
@@ -177,9 +190,28 @@ async def chat_upload_context(file: UploadFile = File(...)):
                 from backend.rag.embedder import create_embeddings
                 from backend.rag.vector_store import store_chunks
                 from backend.core.request_context import get_current_user_id
+                from backend.core.rate_limit import (
+                    upload_rate_limiter_minute, upload_rate_limiter_daily, require_budget,
+                )
                 user_id = get_current_user_id()
                 chunks = chunk_text(extracted)
                 if chunks:
+                    # Phase 29: this is a separate embedding call site from
+                    # api/upload.py (a PDF attached directly in the chat
+                    # composer, not through the Documents page) -- shares
+                    # the same HF embeddings budget, so it needed the same
+                    # protection. A budget rejection here just means
+                    # "don't index this one," not a hard failure -- the
+                    # extracted text is still usable as inline context for
+                    # this one message (see result["text_context"] above),
+                    # so this fails soft into result["indexed"] = False
+                    # like every other failure mode in this except block.
+                    require_budget(
+                        upload_rate_limiter_minute, upload_rate_limiter_daily,
+                        str(user_id) if user_id is not None else "unknown",
+                        minute_detail="Too many document uploads in a short time.",
+                        daily_detail="Today's document upload limit has been reached.",
+                    )
                     embeddings = create_embeddings(chunks)
                     store_chunks(chunks, embeddings, filename, user_id=user_id)
                     result["indexed"] = True
@@ -437,6 +469,20 @@ async def _stream_generator(message: str, conv_id: Optional[int], stream_id: str
 
 @router.post("/chat/stream")
 async def chat_stream(payload: StreamRequest, request: Request):
+    # Phase 29: protects the shared, free-tier LLM/search budget
+    # (GROQ_API_KEY, GEMINI_API_KEY, TAVILY_API_KEY are single keys used by
+    # every user of this deployment) from one user -- a runaway script, a
+    # future automation bug, or just spamming Enter -- exhausting it for
+    # everyone else. Both windows are generous for real human use; this
+    # exists to catch bursts/loops, not to throttle normal chatting.
+    user_id = get_current_user_id()
+    rate_key = str(user_id) if user_id is not None else (request.client.host if request.client else "unknown")
+    require_budget(
+        chat_rate_limiter_minute, chat_rate_limiter_daily, rate_key,
+        minute_detail="You're sending messages faster than Athena can keep up — please slow down for a moment.",
+        daily_detail="You've hit today's message limit for this shared deployment. It resets in 24 hours.",
+    )
+
     # Phase 28: /chat/upload-context already caps images at
     # MAX_CHAT_UPLOAD_MB, but that only constrains the normal
     # composer-attach flow. Nothing stopped a request built by hand (or a

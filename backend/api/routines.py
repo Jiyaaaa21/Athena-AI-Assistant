@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from backend.database.db import SessionLocal
 from backend.database.models import Routine
 from backend.core.request_context import get_current_user_id
+from backend.core.rate_limit import chat_rate_limiter_minute, chat_rate_limiter_daily, require_budget
 
 router = APIRouter()
 
@@ -144,8 +145,26 @@ def run_routine(routine_id: int):
     finally:
         db.close()
 
+    rate_key = str(uid) if uid is not None else "unknown"
+
     results = []
     for step_query in steps:
+        # Phase 29: check per-step, not just once for the whole request --
+        # a routine with several steps makes that many separate LLM
+        # calls through route_and_run() below, all drawing on the same
+        # shared budget /chat/stream protects. If the budget runs out
+        # partway through, remaining steps get a clear message instead
+        # of silently continuing to spend past the limit.
+        try:
+            require_budget(
+                chat_rate_limiter_minute, chat_rate_limiter_daily, rate_key,
+                minute_detail="Rate limit exceeded — please wait a moment before running more routine steps.",
+                daily_detail="You've hit today's usage limit for this shared deployment. It resets in 24 hours.",
+            )
+        except HTTPException as e:
+            results.append({"query": step_query, "answer": f"(Skipped: {e.detail})", "agent": "rate_limited"})
+            continue
+
         try:
             result = route_and_run(step_query)
             results.append({"query": step_query, "answer": result.answer, "agent": result.agent_name})

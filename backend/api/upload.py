@@ -12,6 +12,7 @@ from backend.rag.vector_store import store_chunks, delete_by_source
 from backend.database.db import SessionLocal
 from backend.database.models import Document
 from backend.core.config import MAX_UPLOAD_SIZE_MB, MAX_UPLOAD_PAGES
+from backend.core.rate_limit import upload_rate_limiter_minute, upload_rate_limiter_daily, require_budget
 from backend.core.request_context import get_current_user_id
 
 router = APIRouter()
@@ -110,6 +111,20 @@ async def upload_document(
         # hand back the existing record (saves an embedding pass).
         if hash_match and hash_match.filename == file.filename:
             return _serialize(hash_match)
+
+        # Phase 29: protects the Hugging Face embeddings API (HF_TOKEN) --
+        # a distinct shared resource from chat completions, own budget.
+        # Checked here -- after the dedup short-circuit above (so a
+        # re-upload of identical content, which never reaches
+        # create_embeddings(), doesn't consume budget it never actually
+        # uses) but before any Document row is created (so a rejected
+        # request doesn't leave a misleading "failed" row behind).
+        require_budget(
+            upload_rate_limiter_minute, upload_rate_limiter_daily,
+            str(user_id) if user_id is not None else "unknown",
+            minute_detail="Too many document uploads in a short time — please wait a moment.",
+            daily_detail="You've hit today's document upload limit for this shared deployment. It resets in 24 hours.",
+        )
 
         # Phase 25 fix: PDFs used to be written to data/documents/... on
         # local disk, which is wiped on every Render free-tier redeploy,

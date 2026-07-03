@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from backend.core.logger import agent_logger as logger
 from backend.database.db import SessionLocal
 from backend.core.request_context import get_current_user_id
+from backend.core.rate_limit import voice_rate_limiter_minute, voice_rate_limiter_daily, require_budget
 from backend.voice.stt import transcribe_audio
 from backend.voice.tts import (
     VOICE_CATALOGUE, synthesize, synthesize_stream_async,
@@ -106,6 +107,17 @@ async def transcribe(
     """
     import time
     start = time.monotonic()
+
+    # Phase 29: protects Groq Whisper / the Hugging Face Whisper fallback
+    # -- a distinct shared resource from chat completions, so it has its
+    # own budget rather than eating into the chat one.
+    uid = get_current_user_id()
+    require_budget(
+        voice_rate_limiter_minute, voice_rate_limiter_daily,
+        str(uid) if uid is not None else "unknown",
+        minute_detail="Too many voice messages in a short time — please wait a moment.",
+        daily_detail="You've hit today's voice transcription limit for this shared deployment. It resets in 24 hours.",
+    )
 
     audio_bytes = await audio.read()
     if not audio_bytes:
