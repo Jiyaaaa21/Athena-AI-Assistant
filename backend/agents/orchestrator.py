@@ -33,6 +33,8 @@ from backend.agents.rag_agent import RAGAgent
 from backend.agents.web_search_agent import WebSearchAgent
 from backend.agents.email_agent import EmailAgent
 from backend.agents.action_agent import ActionAgent
+from backend.agents.calculator_agent import CalculatorAgent
+from backend.agents.document_agent import DocumentAgent
 from backend.core.llm import (
     ask_llm_raw, ask_llm_with_memory, ask_llm_with_memory_stream,
 )
@@ -44,6 +46,8 @@ from backend.core.logger import agent_logger
 ALL_AGENTS: list[BaseAgent] = [
     ResearchAgent(),
     PlannerAgent(),
+    CalculatorAgent(),
+    DocumentAgent(),
     NoteAgent(),
     ReminderAgent(),
     TimerAgent(),
