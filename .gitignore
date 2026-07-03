@@ -175,3 +175,8 @@ data/notes/
 *.db
 *.sqlite
 *.sqlite3
+
+data/
+.env
+*.pem
+athena.db
