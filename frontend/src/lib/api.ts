@@ -186,6 +186,7 @@ export function chatStream(
   convId: number | null | undefined,
   callbacks: StreamCallbacks,
   imageDataUri?: string | null,
+  instant?: boolean,
 ): () => void {
   if (!isLive) {
     // Offline / mock: simulate streaming with a timeout
@@ -205,6 +206,19 @@ export function chatStream(
   // ── Token throttle queue ─────────────────────────────────────────────────
   // Tokens arrive in bursts from Groq. We release them at a natural pace
   // so the response feels like it's being typed, not dumped all at once.
+  //
+  // This exists purely for the VISUAL reading experience in text chat --
+  // it has no purpose in voice mode, where nobody is reading characters
+  // scroll by, and it actively hurts: speakIncremental() (fed from
+  // onToken) needs a full sentence, or at least a clause up to the first
+  // comma, before it can dispatch anything to TTS. Splitting into
+  // individual characters and draining one every 18ms means that first
+  // 40-80 character clause -- which the backend and TTS pipeline are
+  // otherwise fully optimized to speak almost immediately -- was taking
+  // 0.7-1.4+ *additional*, entirely artificial seconds to even become
+  // visible to onToken, on top of real network/generation/synthesis
+  // latency. `instant` (passed by voice mode) skips this entirely --
+  // tokens go straight to onToken as soon as they arrive off the wire.
   const TOKEN_INTERVAL_MS = 18;   // ~55 tokens/sec  ≈ Claude's feel
   const tokenQueue: string[] = [];
   let drainTimer: ReturnType<typeof setInterval> | null = null;
@@ -285,23 +299,34 @@ export function chatStream(
             const event: StreamEvent = JSON.parse(line);
             if (event.type === "status") callbacks.onStatus?.(event.text, (event as any).agent);
             else if (event.type === "token") {
-              // Split token into individual characters for smoother rendering
-              // (Groq sends word-sized chunks; we want char-level flow)
-              for (const char of event.text) {
-                tokenQueue.push(char);
+              if (instant) {
+                // Voice mode: no artificial pacing -- straight to
+                // onToken (and therefore speakIncremental) the moment
+                // this token arrives off the wire.
+                callbacks.onToken(event.text);
+              } else {
+                // Split token into individual characters for smoother rendering
+                // (Groq sends word-sized chunks; we want char-level flow)
+                for (const char of event.text) {
+                  tokenQueue.push(char);
+                }
+                startDrain();
               }
-              startDrain();
             }
             else if (event.type === "done") {
-              // Don't fire done until queue is drained
-              streamDonePayload = {
-                conversationId: event.conversationId,
-                sources: event.sources,
-                agentName: event.agentName,
-                steps: event.steps,
-              };
-              // If queue is already empty, startDrain interval will fire done on next tick
-              startDrain();
+              if (instant) {
+                callbacks.onDone(event.conversationId, event.sources, event.agentName, event.steps);
+              } else {
+                // Don't fire done until queue is drained
+                streamDonePayload = {
+                  conversationId: event.conversationId,
+                  sources: event.sources,
+                  agentName: event.agentName,
+                  steps: event.steps,
+                };
+                // If queue is already empty, startDrain interval will fire done on next tick
+                startDrain();
+              }
             }
             else if (event.type === "error") { stopDrain(); callbacks.onError?.(event.text); }
           } catch {

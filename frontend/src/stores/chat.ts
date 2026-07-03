@@ -276,6 +276,16 @@ export const useChat = create<ChatState>((set, get) => ({
         },
       },
       uploadedContext?.image_data_uri,
+      // Phase 33 fix ("Athena speaks way after transcribing"): the
+      // per-character typewriter throttle in chatStream (built for
+      // visual reading comfort in text chat) was being applied
+      // unconditionally to voice mode too -- adding up to 1+ artificial
+      // seconds of delay before speakIncremental() even saw enough text
+      // to dispatch the first TTS chunk, on top of real network/LLM/
+      // synthesis latency. speakAloud=true means nobody's reading a
+      // typewriter effect, they're waiting to hear a voice -- skip the
+      // throttle entirely for voice mode.
+      speakAloud,
     );
 
     set({ _cancelStream: cancel });
