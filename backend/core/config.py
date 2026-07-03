@@ -160,5 +160,21 @@ MAX_CONNECTED_ACTIONS_PER_USER = int(os.getenv("MAX_CONNECTED_ACTIONS_PER_USER",
 # until this many minutes have passed since their last one -- the whole
 # point is occasional, relevant nudges, not a notification every cycle.
 PROACTIVE_ENABLED = os.getenv("PROACTIVE_ENABLED", "true").lower() in ("1", "true", "yes")
-PROACTIVE_INTERVAL_SECONDS = int(os.getenv("PROACTIVE_INTERVAL_SECONDS", "900"))
+# Phase 29 fix: was 900s (15 min) by default. On a free-tier LLM budget
+# shared across every user of the app, checking every single active
+# user every 15 minutes -- entirely in the background, independent of
+# anyone actually using the app -- was a meaningful, silent drain on the
+# same quota real chat messages need. An hour is still genuinely
+# "proactive" for nudges like overdue reminders or stale goals, which
+# aren't second-to-minute time-sensitive, and cuts baseline background
+# LLM usage 4x.
+PROACTIVE_INTERVAL_SECONDS = int(os.getenv("PROACTIVE_INTERVAL_SECONDS", "3600"))
 PROACTIVE_MIN_GAP_MINUTES = int(os.getenv("PROACTIVE_MIN_GAP_MINUTES", "120"))
+# Phase 29 addition: hard ceiling on how many proactive-engine LLM decision
+# calls can happen in a single day, regardless of user count or how often
+# the interval fires. A safety net, not the primary fix (see the
+# per-user attempt-cooldown and same-cycle circuit breaker in
+# core/proactive_engine.py) -- this exists so a bug, a burst of new
+# users, or a misconfigured interval can never make this background
+# feature alone exhaust a free-tier quota that has no paid fallback.
+PROACTIVE_MAX_CALLS_PER_DAY = int(os.getenv("PROACTIVE_MAX_CALLS_PER_DAY", "100"))
