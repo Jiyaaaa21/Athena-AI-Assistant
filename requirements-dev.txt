@@ -1,0 +1,10 @@
+# Test-only dependencies. Install alongside requirements.txt for local
+# development or CI -- never installed in the production deployment
+# (Render only installs requirements.txt), so this doesn't bloat or slow
+# down the actual running app.
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   pytest
+
+pytest==9.1.1
+pytest-cov==7.1.0

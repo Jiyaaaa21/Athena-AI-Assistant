@@ -73,6 +73,19 @@ class RateLimiter:
                 hits.popleft()
             return max(0, self.max_calls - len(hits))
 
+    def reset(self, key: str | None = None) -> None:
+        """Clears recorded hits for one key, or every key if none given.
+        Mainly for test isolation (these limiters are module-level
+        singletons shared for the process's whole lifetime, so without
+        this, one test's rate-limit-tripping traffic would leak into the
+        next test) -- but also usable as a real admin action later (e.g.
+        clearing a specific user's limit after a false positive)."""
+        with self._lock:
+            if key is None:
+                self._hits.clear()
+            else:
+                self._hits.pop(key, None)
+
     def check_or_raise(self, key: str, detail: str | None = None):
         """Convenience for route handlers: raises HTTPException(429) if
         the key is over the limit, otherwise returns normally."""

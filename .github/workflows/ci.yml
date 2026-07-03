@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-tests:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        # conftest.py sets safe dummy values (GROQ_API_KEY, JWT_SECRET_KEY,
+        # etc.) for anything the app needs just to import cleanly -- no
+        # real secrets needed to run this suite, and no test in it makes
+        # a real network call to Groq/Gemini/HF/Tavily.
+        run: pytest -v --cov=backend --cov-report=term-missing
+
+  frontend-checks:
+    name: Frontend type-check + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Build
+        # Catches build-breaking errors (bad imports, syntax issues in
+        # non-TS files, etc.) that tsc alone wouldn't -- same check this
+        # session has been running by hand before every frontend fix.
+        run: npm run build
+        env:
+          VITE_API_BASE_URL: https://example-placeholder.invalid
