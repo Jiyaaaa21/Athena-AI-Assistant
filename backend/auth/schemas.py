@@ -95,3 +95,14 @@ class PreferencesOut(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str = Field(min_length=8, max_length=128)
+
+
+class DeleteAccountRequest(BaseModel):
+    # Phase 29: deleting an account is irreversible and destroys every
+    # piece of data the user has -- requiring the password again here
+    # (on top of the JWT already proving an active session) matches the
+    # same "re-auth for consequential actions" pattern change_password
+    # already uses, and specifically guards against a hijacked/leaked
+    # browser session being used to nuke the account without ever
+    # knowing the actual password.
+    password: str

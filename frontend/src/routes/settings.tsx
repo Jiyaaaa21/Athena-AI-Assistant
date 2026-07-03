@@ -24,10 +24,17 @@ import { useVoice } from "@/stores/voice";
 import {
   CheckCircle2, AlertCircle, RefreshCw, Sun, Moon, Monitor,
   Activity, Zap, Volume2, Mic, Play, Globe, CalendarDays, ExternalLink, X,
-  Bell, BellOff, BellRing, Send, Info, Sparkles,
+  Bell, BellOff, BellRing, Send, Info, Sparkles, Download, Trash2, ShieldAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 import { getAccessToken } from "@/stores/auth";
+import { useAuth } from "@/stores/auth";
+import { useNavigate } from "@tanstack/react-router";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { pushApi } from "@/lib/push-api";
 import { proactiveApi } from "@/lib/proactive-api";
@@ -434,6 +441,157 @@ function ProactiveSettingsSection() {
   );
 }
 
+// ── Phase 29: Account — data export + deletion ────────────────────────────────
+
+function AccountSettingsSection() {
+  const navigate = useNavigate();
+  const logout = useAuth((s) => s.logout);
+
+  const [exporting, setExporting] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  const handleExport = async () => {
+    if (!isLive) return;
+    setExporting(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/profile/export`, {
+        headers: { Authorization: `Bearer ${getAccessToken()}` },
+      });
+      if (!res.ok) throw new Error(`Export failed (${res.status})`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "athena_export.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Your data export has started downloading.");
+    } catch (e) {
+      toast.error((e as Error).message || "Couldn't export your data");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!isLive || !deletePassword) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/profile/me`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${getAccessToken()}`,
+        },
+        body: JSON.stringify({ password: deletePassword }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDeleteError(data?.detail || "Couldn't delete your account. Please try again.");
+        setDeleting(false);
+        return;
+      }
+      toast.success("Your account has been permanently deleted.");
+      await logout();
+      navigate({ to: "/login" });
+    } catch (e) {
+      setDeleteError((e as Error).message || "Couldn't delete your account. Please try again.");
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldAlert className="size-4 text-primary" />
+          Your Data & Account
+        </CardTitle>
+        <CardDescription>
+          Export everything Athena has stored for you, or permanently delete your account.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {!isLive ? (
+          <p className="text-sm text-muted-foreground">Connect the backend to manage your account.</p>
+        ) : (
+          <>
+            <Row
+              label="Export your data"
+              description="Download every note, reminder, goal, conversation, document, and more as a zip file."
+            >
+              <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting}>
+                <Download className="size-3.5 mr-1.5" />
+                {exporting ? "Preparing…" : "Export"}
+              </Button>
+            </Row>
+
+            <div className="pt-2 border-t border-border">
+              <Row
+                label="Delete your account"
+                description="Permanently deletes your account and every piece of data associated with it. This cannot be undone."
+              >
+                <AlertDialog open={dialogOpen} onOpenChange={(open) => {
+                  setDialogOpen(open);
+                  if (!open) { setDeletePassword(""); setDeleteError(null); }
+                }}>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="destructive" size="sm">
+                      <Trash2 className="size-3.5 mr-1.5" />
+                      Delete account
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete your account permanently?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This deletes your account and every note, reminder, goal, project, conversation,
+                        document, and setting associated with it — immediately and irreversibly, on every
+                        device you're signed in on. Consider exporting your data first if you might want it later.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <div className="py-2">
+                      <Label htmlFor="delete-password" className="text-sm">Confirm your password</Label>
+                      <Input
+                        id="delete-password"
+                        type="password"
+                        value={deletePassword}
+                        onChange={(e) => { setDeletePassword(e.target.value); setDeleteError(null); }}
+                        placeholder="Your current password"
+                        className="mt-1.5"
+                        autoFocus
+                      />
+                      {deleteError && (
+                        <p className="text-xs text-destructive mt-1.5">{deleteError}</p>
+                      )}
+                    </div>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={(e) => { e.preventDefault(); handleDelete(); }}
+                        disabled={!deletePassword || deleting}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      >
+                        {deleting ? "Deleting…" : "Permanently delete my account"}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </Row>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function SettingsPage() {
   const qc = useQueryClient();
 
@@ -574,6 +732,8 @@ function SettingsPage() {
         <PushSettingsSection />
 
         <ProactiveSettingsSection />
+
+        <AccountSettingsSection />
       </div>
 
       {/* ── ISSUE 9 + 11: Voice OS Settings (cleaned up + wake word) ─────── */}
