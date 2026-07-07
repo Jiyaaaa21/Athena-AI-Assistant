@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Generator
 
 from backend.agents.base import BaseAgent, AgentResult
-from backend.core.llm import ask_llm_raw, ask_llm_raw_stream
+from backend.core.llm import ask_llm_raw, ask_llm_raw_stream, ask_llm_raw_or_none
 from backend.core.logger import agent_logger
 from backend.tools.news import NewsTool
 from backend.tools.weather import WeatherTool
@@ -98,7 +98,7 @@ class WebSearchAgent(BaseAgent):
             pass
         return False
 
-    def _extract_city(self, query: str) -> str:
+    def _extract_city(self, query: str) -> str | None:
         from backend.core.memory_service import get_history
         history = get_history()
         recent = history[-6:] if history else []
@@ -112,18 +112,29 @@ class WebSearchAgent(BaseAgent):
             f"If the query IS a city name (e.g. 'Gurgaon', 'Delhi'), return it directly. "
             f"Return ONLY the city name, nothing else.{context}\n\nQuery: {query}"
         )
-        city = ask_llm_raw(prompt).strip()
+        # Phase 35 fix: use the failure-aware variant -- a provider
+        # outage previously meant the failure message itself got treated
+        # as a city name and handed to WeatherTool, which then failed
+        # geocoding lookup with a confusing secondary error instead of
+        # clearly saying the AI service was unavailable.
+        city = ask_llm_raw_or_none(prompt)
+        if city is None:
+            return None
+        city = city.strip()
         # Clean up common LLM artifacts
         for junk in ["The city is ", "City: ", ".", ","]:
             city = city.replace(junk, "").strip()
         return city
 
-    def _extract_topic(self, query: str) -> str:
+    def _extract_topic(self, query: str) -> str | None:
         prompt = (
             f"Extract the main search topic from this query (2-4 words max). "
             f"Return ONLY the topic, nothing else.\n\nQuery: {query}"
         )
-        return ask_llm_raw(prompt).strip()
+        # Phase 35 fix: same reasoning as _extract_city above -- this
+        # feeds directly into NewsTool.run(topic).
+        result = ask_llm_raw_or_none(prompt)
+        return result.strip() if result is not None else None
 
     def _weather_synthesis_prompt(self, query: str, city: str, raw_data: str) -> str:
         history = self.get_conversation_context(turns=4)
@@ -195,6 +206,11 @@ class WebSearchAgent(BaseAgent):
         if self._is_weather_query(query):
             steps.append("Detected weather query…")
             city = self._extract_city(query)
+            if city is None:
+                return AgentResult(
+                    answer="I couldn't check the weather just now — the AI service is temporarily unavailable. Please try again in a moment.",
+                    agent_name=self.name, sources=[], steps=steps, confidence=20,
+                )
             steps.append(f"City resolved: '{city}'")
 
             raw = _weather_tool.run(city)
@@ -222,6 +238,11 @@ class WebSearchAgent(BaseAgent):
         if self._is_news_query(query):
             steps.append("Extracting search topic…")
             topic = self._extract_topic(query)
+            if topic is None:
+                return AgentResult(
+                    answer="I couldn't search the news just now — the AI service is temporarily unavailable. Please try again in a moment.",
+                    agent_name=self.name, sources=[], steps=steps, confidence=20,
+                )
             steps.append(f"Searching news: '{topic}'…")
             raw = _news_tool.run(topic)
             if not raw.strip() or "error" in raw.lower():
@@ -266,6 +287,9 @@ class WebSearchAgent(BaseAgent):
 
         if self._is_weather_query(query):
             city = self._extract_city(query)
+            if city is None:
+                yield "I couldn't check the weather just now — the AI service is temporarily unavailable. Please try again in a moment."
+                return
             raw = _weather_tool.run(city)
             if "not found" in raw.lower() or "failed" in raw.lower():
                 raw = _news_tool.run(f"weather {city}")
@@ -275,6 +299,9 @@ class WebSearchAgent(BaseAgent):
         else:
             if self._is_news_query(query):
                 topic = self._extract_topic(query)
+                if topic is None:
+                    yield "I couldn't search the news just now — the AI service is temporarily unavailable. Please try again in a moment."
+                    return
                 raw = _news_tool.run(topic)
                 prompt = self._news_synthesis_prompt(query, raw)
             else:

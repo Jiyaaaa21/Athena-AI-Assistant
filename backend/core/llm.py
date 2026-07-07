@@ -555,6 +555,33 @@ def _trim_history(history: list[dict]) -> list[dict]:
     return trimmed
 
 
+def ask_llm_raw_or_none(prompt: str) -> str | None:
+    """
+    Same as ask_llm_raw(), but returns None instead of the raw failure
+    string when both providers are unavailable.
+
+    Phase 35 fix: ask_llm_raw() deliberately returns
+    _BOTH_PROVIDERS_FAILED_MESSAGE as a clean string rather than raising,
+    which is exactly right for call sites where that string IS the final
+    answer shown to the user. But several agents use ask_llm_raw() for a
+    narrower EXTRACTION step (pull a city name out of "what's the
+    weather in Delhi", pull a search topic out of a news request) and
+    then feed that extracted value into a second tool call
+    (WeatherTool.run(city), NewsTool.run(topic)). At those call sites,
+    a provider outage meant the failure message itself got passed along
+    as if it were a real city/topic -- WeatherTool would then fail
+    geocoding lookup for "I'm having trouble reaching the AI service...",
+    producing a confusing secondary error that obscured what actually
+    went wrong. Use this instead of ask_llm_raw() specifically at
+    extraction call sites that feed a second step; keep ask_llm_raw()
+    as-is for call sites where the response IS the final answer.
+    """
+    result = ask_llm_raw(prompt)
+    if result.strip() == _BOTH_PROVIDERS_FAILED_MESSAGE:
+        return None
+    return result
+
+
 def ask_llm_raw(prompt: str) -> str:
     """One-shot LLM call with Athena personality but no memory."""
     return _complete([

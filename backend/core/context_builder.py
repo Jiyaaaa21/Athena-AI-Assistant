@@ -22,6 +22,7 @@ from backend.database.models import (
     Goal, Project, Reminder, Note, Message, Conversation,
 )
 from backend.core.request_context import get_current_user_id
+from backend.core.user_timezone import get_user_timezone, local_now_str
 
 
 def _aware(dt: datetime) -> datetime:
@@ -123,7 +124,25 @@ def build_user_context() -> dict:
             if m.content and len(m.content.strip()) > 10
         })[:5]
 
+        # Phase 35 fix: this context block previously never surfaced the
+        # actual current date/time as a fact anywhere -- `now` above was
+        # only ever used internally to compute whether a reminder counts
+        # as overdue. A plain "what time is it" or "what day is it"
+        # question matches no agent's keywords (reminder-related
+        # keywords require the word "remind"/"reminder"/etc.), so it
+        # fell through to the generic conversational LLM response with
+        # zero grounding for the real current time -- it could only
+        # guess. Reusing the same per-user timezone resolution already
+        # built for reminders (core/user_timezone.py) so this is
+        # correctly localized, not just a raw UTC timestamp.
+        try:
+            tz_name = get_user_timezone()
+            current_local_time = local_now_str(tz_name)
+        except Exception:
+            current_local_time = None
+
         return {
+            "current_local_time": current_local_time,
             "goals": goals_summary,
             "projects": projects_summary,
             "pending_reminders": pending_reminders,
@@ -147,6 +166,10 @@ def format_context_for_prompt(ctx: dict) -> str:
         return ""
 
     lines = ["\n\n--- ATHENA CONTEXT (use to personalize your response) ---"]
+
+    if ctx.get("current_local_time"):
+        lines.append(f"\nCURRENT DATE & TIME (user's local timezone): {ctx['current_local_time']}")
+        lines.append("If asked what time or day it is, answer directly from this — it is accurate and live, not a guess.")
 
     if ctx.get("goals"):
         lines.append("\nUSER'S ACTIVE GOALS:")
